@@ -14,3 +14,4 @@ logs/
 preferences.yaml
 .history/
 deej
+config.yaml
