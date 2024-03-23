@@ -45,3 +45,9 @@ tasks:
       - "go" has to be in PATH
     cmds:
     - go run ./cmd
+
+  build:
+    cmds:
+    - go build -o deej ./cmd
+    - sudo mv deej /etc/deej
+    - systemctl restart --user deej

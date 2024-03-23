@@ -11,6 +11,7 @@ import (
 type PASessionFinder struct {
 	logger        *zap.SugaredLogger
 	sessionLogger *zap.SugaredLogger
+	notifier      *VolumeNotifier
 
 	client *proto.Client
 	conn   net.Conn
@@ -18,7 +19,7 @@ type PASessionFinder struct {
 	Updates chan struct{}
 }
 
-func newSessionFinder(logger *zap.SugaredLogger) (*PASessionFinder, error) {
+func newSessionFinder(logger *zap.SugaredLogger, notifier *VolumeNotifier) (*PASessionFinder, error) {
 	client, conn, err := proto.Connect("")
 	if err != nil {
 		logger.Warnw("Failed to establish PulseAudio connection", "error", err)
@@ -41,6 +42,7 @@ func newSessionFinder(logger *zap.SugaredLogger) (*PASessionFinder, error) {
 	sf := &PASessionFinder{
 		logger:        logger.Named("session_finder"),
 		sessionLogger: logger.Named("sessions"),
+		notifier:      notifier,
 		client:        client,
 		conn:          conn,
 		Updates:       make(chan struct{}),
@@ -182,7 +184,11 @@ func (sf *PASessionFinder) enumerateAndAddSessions(sessions *[]Session) error {
 		}
 
 		// create the deej session object
-		newSession := newPASession(sf.sessionLogger, sf.client, info.SinkInputIndex, info.Channels, name.String())
+		newSession := newPASession(
+			sf.sessionLogger,
+			sf.client, sf.notifier,
+			info.SinkInputIndex, info.Channels, name.String(),
+		)
 
 		// add it to our slice
 		*sessions = append(*sessions, newSession)

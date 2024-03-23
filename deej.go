@@ -65,7 +65,9 @@ func NewDeej(logger *zap.SugaredLogger) (*Deej, error) {
 
 	d.serial = serial
 
-	sessionFinder, err := newSessionFinder(logger)
+	vn := NewVolumeNotifier(logger)
+
+	sessionFinder, err := newSessionFinder(logger, vn)
 	if err != nil {
 		logger.Errorw("Failed to create SessionFinder", "error", err)
 

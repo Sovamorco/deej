@@ -2,10 +2,6 @@ package deej
 
 import (
 	"fmt"
-	"io"
-	"os/exec"
-	"strconv"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -20,12 +16,11 @@ type PASession struct {
 
 	processName string
 
-	client *proto.Client
+	client   *proto.Client
+	notifier *VolumeNotifier
 
-	sinkInputIndex     uint32
-	sinkInputChannels  byte
-	prevNotifID        int       `exhaustruct:"optional"`
-	prevNotifIDExpires time.Time `exhaustruct:"optional"`
+	sinkInputIndex    uint32
+	sinkInputChannels byte
 }
 
 type masterSession struct {
@@ -41,6 +36,7 @@ type masterSession struct {
 func newPASession(
 	logger *zap.SugaredLogger,
 	client *proto.Client,
+	notifier *VolumeNotifier,
 	sinkInputIndex uint32,
 	sinkInputChannels byte,
 	processName string,
@@ -48,6 +44,7 @@ func newPASession(
 	s := &PASession{
 		processName:       processName,
 		client:            client,
+		notifier:          notifier,
 		sinkInputIndex:    sinkInputIndex,
 		sinkInputChannels: sinkInputChannels,
 	}
@@ -123,98 +120,11 @@ func (s *PASession) SetVolume(v float32) error {
 		return fmt.Errorf("adjust session volume: %w", err)
 	}
 
-	go s.notify(v)
+	go s.notifier.Notify(s.processName, v)
 
 	s.logger.Debugw("Adjusting session volume", "to", fmt.Sprintf("%.2f", v))
 
 	return nil
-}
-
-func (s *PASession) notify(v float32) {
-	nsArgs := []string{
-		"-u", "low",
-		"-t", "1000",
-		"-a", "deej",
-		"-i", "deej",
-		"-p",
-		//nolint:gomnd // percentage from 0-1 float.
-		fmt.Sprintf("volume for %s changed to %.d%%", s.processName, int(v*100)),
-	}
-
-	if s.prevNotifID != 0 {
-		nsArgs = append(nsArgs, "-r", strconv.Itoa(s.prevNotifID))
-	}
-
-	notifIDB, err := s.runNotify(nsArgs)
-	if err != nil {
-		s.logger.Warn("Failed to run notify: %+v", err)
-
-		return
-	}
-
-	notifID, err := strconv.Atoi(string(notifIDB))
-	if err != nil {
-		s.logger.Debugf("Failed to convert notifID: %+v", err)
-
-		return
-	}
-
-	lastNotifID := s.prevNotifID
-
-	s.prevNotifID = notifID
-	s.prevNotifIDExpires = time.Now().Add(1 * time.Second)
-
-	if lastNotifID == 0 {
-		go func() {
-			for {
-				<-time.After(time.Until(s.prevNotifIDExpires))
-
-				if time.Now().After(s.prevNotifIDExpires) {
-					s.logger.Debug("Invalidating notif id: ", s.prevNotifID)
-					s.prevNotifID = 0
-
-					return
-				}
-			}
-		}()
-	}
-
-	s.logger.Debug("Notif ID: ", s.prevNotifID)
-}
-
-func (s *PASession) runNotify(args []string) ([]byte, error) {
-	cmd := exec.Command("notify-send", args...)
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("get stdout pipe: %w", err)
-	}
-
-	err = cmd.Start()
-	if err != nil {
-		return nil, fmt.Errorf("send notif: %w", err)
-	}
-
-	notifIDB, err := io.ReadAll(stdout)
-	if err != nil {
-		s.logger.Warnf("read notif: %+v", err)
-	}
-
-	err = cmd.Wait()
-	if err != nil {
-		return nil, fmt.Errorf("wait for notif: %w", err)
-	}
-
-	if notifIDB == nil || len(notifIDB) < 1 {
-		return []byte{'0'}, nil
-	}
-
-	lastcn := len(notifIDB) - 1
-	if notifIDB[lastcn] == '\n' {
-		notifIDB = notifIDB[:lastcn]
-	}
-
-	return notifIDB, nil
 }
 
 func (s *PASession) Release() {
