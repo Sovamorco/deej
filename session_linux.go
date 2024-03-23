@@ -22,9 +22,9 @@ type PASession struct {
 
 	client *proto.Client
 
-	sinkInputIndex    uint32
-	sinkInputChannels byte
-	prevNotifID       int
+	sinkInputIndex     uint32
+	sinkInputChannels  byte
+	prevNotifID        int
 	prevNotifIDExpires time.Time
 }
 
@@ -45,7 +45,6 @@ func newPASession(
 	sinkInputChannels byte,
 	processName string,
 ) *PASession {
-
 	s := &PASession{
 		client:            client,
 		sinkInputIndex:    sinkInputIndex,
@@ -70,7 +69,6 @@ func newMasterSession(
 	streamChannels byte,
 	isOutput bool,
 ) *masterSession {
-
 	s := &masterSession{
 		client:         client,
 		streamIndex:    streamIndex,
@@ -137,7 +135,7 @@ func (s *PASession) notify(v float32) {
 		"-a", "deej",
 		"-i", "deej",
 		"-p",
-		fmt.Sprintf("volume for %s changed to %.d%%", s.processName, int(v * 100)),
+		fmt.Sprintf("volume for %s changed to %.d%%", s.processName, int(v*100)),
 	}
 
 	if s.prevNotifID != 0 {
@@ -196,7 +194,7 @@ func (s *PASession) notify(v float32) {
 				if time.Now().After(s.prevNotifIDExpires) {
 					s.logger.Debug("Invalidating notif id: ", s.prevNotifID)
 					s.prevNotifID = 0
-					
+
 					return
 				}
 			}

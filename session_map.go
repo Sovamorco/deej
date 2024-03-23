@@ -152,7 +152,7 @@ func (m *sessionMap) refreshSessions() {
 
 		for slider, value := range m.deej.serial.currentSliderPercentValues {
 			m.handleSliderMoveEvent(SliderMoveEvent{
-				SliderID: slider,
+				SliderID:     slider,
 				PercentValue: value,
 			})
 		}
@@ -244,7 +244,6 @@ func (m *sessionMap) targetHasSpecialTransform(target string) bool {
 }
 
 func (m *sessionMap) resolveTarget(target string) []string {
-
 	// start by ignoring the case
 	target = strings.ToLower(target)
 
@@ -257,7 +256,6 @@ func (m *sessionMap) resolveTarget(target string) []string {
 }
 
 func (m *sessionMap) applyTargetTransform(specialTargetName string) []string {
-
 	// select the transformation based on its name
 	switch specialTargetName {
 	// get currently unmapped sessions

@@ -33,7 +33,6 @@ func NewToastNotifier(logger *zap.SugaredLogger) (*ToastNotifier, error) {
 
 // Notify sends a toast notification (or falls back to other types of notification for older Windows versions)
 func (tn *ToastNotifier) Notify(title string, message string) {
-
 	// we need to unpack deej.ico somewhere to remain portable. we already have it as bytes so it should be fine
 	appIconPath := filepath.Join(os.TempDir(), "deej.ico")
 

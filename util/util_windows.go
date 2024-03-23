@@ -20,7 +20,6 @@ var (
 )
 
 func getCurrentWindowProcessNames() ([]string, error) {
-
 	// apply an internal cooldown on this function to avoid calling windows API functions too frequently.
 	// return a cached value during that cooldown
 	now := time.Now()
@@ -44,7 +43,6 @@ func getCurrentWindowProcessNames() ([]string, error) {
 
 	// a callback that will be called for each child window of the foreground window, if it has any
 	enumChildWindowsCallback := func(childHWND *uintptr, lParam *uintptr) uintptr {
-
 		// cast the outer lp into something we can work with (maybe closures are good enough?)
 		ownerPID := (*uint32)(unsafe.Pointer(lParam))
 

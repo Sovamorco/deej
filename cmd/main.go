@@ -22,7 +22,6 @@ func init() {
 }
 
 func main() {
-
 	// first we need a logger
 	logger, err := deej.NewLogger(buildType)
 	if err != nil {

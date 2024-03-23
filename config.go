@@ -167,7 +167,6 @@ func (cc *CanonicalConfig) WatchConfigFileChanges() {
 	// establish watch using viper as opposed to doing it ourselves, though our internal cooldown is still required
 	cc.userConfig.WatchConfig()
 	cc.userConfig.OnConfigChange(func(event fsnotify.Event) {
-
 		// when we get a write event...
 		if event.Op&fsnotify.Write == fsnotify.Write {
 
@@ -209,7 +208,6 @@ func (cc *CanonicalConfig) StopWatchingConfigFile() {
 }
 
 func (cc *CanonicalConfig) populateFromVipers() error {
-
 	// merge the slider mappings from the user and internal configs
 	cc.SliderMapping = sliderMapFromConfigs(
 		cc.userConfig.GetStringMapStringSlice(configKeySliderMapping),
