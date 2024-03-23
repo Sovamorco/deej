@@ -198,6 +198,8 @@ func (m *sessionMap) sessionMapped(session Session) bool {
 }
 
 func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
+	m.logger.Debugf("Handling slider move event: %+v", event)
+
 	// get the targets mapped to this slider from the config
 	targets, ok := m.deej.config.SliderMapping.get(event.SliderID)
 
@@ -206,11 +208,8 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 		return
 	}
 
-	adjustmentFailed := false
-
 	// for each possible target for this slider...
 	for _, target := range targets {
-
 		// resolve the target name by cleaning it up and applying any special transformations.
 		// depending on the transformation applied, this can result in more than one target name
 		resolvedTargets := m.resolveTarget(target)
@@ -228,18 +227,15 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 
 			// iterate all matching sessions and adjust the volume of each one
 			for _, session := range sessions {
+				m.logger.Debugf("Getting volume for session: %+v", session)
 				if session.GetVolume() != event.PercentValue {
+					m.logger.Debugf("Setting volume for session: %+v", session)
 					if err := session.SetVolume(event.PercentValue); err != nil {
 						m.logger.Warnw("Failed to set target session volume", "error", err)
-						adjustmentFailed = true
 					}
 				}
 			}
 		}
-	}
-
-	if adjustmentFailed {
-		m.logger.Warn("Adjustment failed for targets: %v", targets)
 	}
 }
 
