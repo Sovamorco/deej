@@ -20,12 +20,6 @@ func (d *Deej) initializeTray(onDone func()) {
 		editConfig := systray.AddMenuItem("Edit configuration", "Open config file with notepad")
 		editConfig.SetIcon(icon.EditConfig)
 
-		if d.version != "" {
-			systray.AddSeparator()
-			versionInfo := systray.AddMenuItem(d.version, "")
-			versionInfo.Disable()
-		}
-
 		systray.AddSeparator()
 		quit := systray.AddMenuItem("Quit", "Stop deej and quit")
 
@@ -33,7 +27,6 @@ func (d *Deej) initializeTray(onDone func()) {
 		go func() {
 			for {
 				select {
-
 				// quit
 				case <-quit.ClickedCh:
 					logger.Info("Quit menu item clicked, stopping")

@@ -11,17 +11,17 @@ import (
 	"github.com/omriharel/deej/util"
 )
 
-// Notifier provides generic notification sending
+// Notifier provides generic notification sending.
 type Notifier interface {
 	Notify(title string, message string)
 }
 
-// ToastNotifier provides toast notifications for Windows
+// ToastNotifier provides toast notifications for Windows.
 type ToastNotifier struct {
 	logger *zap.SugaredLogger
 }
 
-// NewToastNotifier creates a new ToastNotifier
+// NewToastNotifier creates a new ToastNotifier.
 func NewToastNotifier(logger *zap.SugaredLogger) (*ToastNotifier, error) {
 	logger = logger.Named("notifier")
 	tn := &ToastNotifier{logger: logger}
@@ -31,7 +31,7 @@ func NewToastNotifier(logger *zap.SugaredLogger) (*ToastNotifier, error) {
 	return tn, nil
 }
 
-// Notify sends a toast notification (or falls back to other types of notification for older Windows versions)
+// Notify sends a toast notification (or falls back to other types of notification for older Windows versions).
 func (tn *ToastNotifier) Notify(title string, message string) {
 	// we need to unpack deej.ico somewhere to remain portable. we already have it as bytes so it should be fine
 	appIconPath := filepath.Join(os.TempDir(), "deej.ico")

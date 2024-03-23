@@ -12,11 +12,11 @@ import (
 	"github.com/jfreymuth/pulse/proto"
 )
 
-// normal PulseAudio volume (100%)
+// normal PulseAudio volume (100%).
 const maxVolume = 0x10000
 
 type PASession struct {
-	baseSession
+	baseSession `exhaustruct:"optional"`
 
 	processName string
 
@@ -24,12 +24,12 @@ type PASession struct {
 
 	sinkInputIndex     uint32
 	sinkInputChannels  byte
-	prevNotifID        int
-	prevNotifIDExpires time.Time
+	prevNotifID        int       `exhaustruct:"optional"`
+	prevNotifIDExpires time.Time `exhaustruct:"optional"`
 }
 
 type masterSession struct {
-	baseSession
+	baseSession `exhaustruct:"optional"`
 
 	client *proto.Client
 
@@ -46,12 +46,12 @@ func newPASession(
 	processName string,
 ) *PASession {
 	s := &PASession{
+		processName:       processName,
 		client:            client,
 		sinkInputIndex:    sinkInputIndex,
 		sinkInputChannels: sinkInputChannels,
 	}
 
-	s.processName = processName
 	s.name = processName
 	s.humanReadableDesc = processName
 
@@ -98,7 +98,8 @@ func (s *PASession) GetVolume() float32 {
 	request := proto.GetSinkInputInfo{
 		SinkInputIndex: s.sinkInputIndex,
 	}
-	reply := proto.GetSinkInputInfoReply{}
+
+	var reply proto.GetSinkInputInfoReply
 
 	if err := s.client.Request(&request, &reply); err != nil {
 		s.logger.Warnw("Failed to get session volume", "error", err)
@@ -118,6 +119,7 @@ func (s *PASession) SetVolume(v float32) error {
 
 	if err := s.client.Request(&request, nil); err != nil {
 		s.logger.Warnw("Failed to set session volume", "error", err)
+
 		return fmt.Errorf("adjust session volume: %w", err)
 	}
 
@@ -135,43 +137,19 @@ func (s *PASession) notify(v float32) {
 		"-a", "deej",
 		"-i", "deej",
 		"-p",
+		//nolint:gomnd // percentage from 0-1 float.
 		fmt.Sprintf("volume for %s changed to %.d%%", s.processName, int(v*100)),
 	}
 
 	if s.prevNotifID != 0 {
 		nsArgs = append(nsArgs, "-r", strconv.Itoa(s.prevNotifID))
 	}
-	cmd := exec.Command("notify-send", nsArgs...)
 
-	stdout, err := cmd.StdoutPipe()
+	notifIDB, err := s.runNotify(nsArgs)
 	if err != nil {
-		s.logger.Debugf("Failed to get stdout pipe: %+v", err)
+		s.logger.Warn("Failed to run notify: %+v", err)
 
 		return
-	}
-
-	err = cmd.Start()
-	if err != nil {
-		s.logger.Debugf("Failed to send notif: %+v", err)
-
-		return
-	}
-
-	notifIDB, err := io.ReadAll(stdout)
-	if err != nil {
-		s.logger.Debugf("Failed to read notif: %+v", err)
-	}
-
-	err = cmd.Wait()
-	if err != nil {
-		s.logger.Debugf("Failed to wait for notif: %+v", err)
-
-		return
-	}
-
-	lastcn := len(notifIDB) - 1
-	if notifIDB[lastcn] == '\n' {
-		notifIDB = notifIDB[:lastcn]
 	}
 
 	notifID, err := strconv.Atoi(string(notifIDB))
@@ -204,6 +182,41 @@ func (s *PASession) notify(v float32) {
 	s.logger.Debug("Notif ID: ", s.prevNotifID)
 }
 
+func (s *PASession) runNotify(args []string) ([]byte, error) {
+	cmd := exec.Command("notify-send", args...)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("get stdout pipe: %w", err)
+	}
+
+	err = cmd.Start()
+	if err != nil {
+		return nil, fmt.Errorf("send notif: %w", err)
+	}
+
+	notifIDB, err := io.ReadAll(stdout)
+	if err != nil {
+		s.logger.Warnf("read notif: %+v", err)
+	}
+
+	err = cmd.Wait()
+	if err != nil {
+		return nil, fmt.Errorf("wait for notif: %w", err)
+	}
+
+	if notifIDB == nil || len(notifIDB) < 1 {
+		return []byte{'0'}, nil
+	}
+
+	lastcn := len(notifIDB) - 1
+	if notifIDB[lastcn] == '\n' {
+		notifIDB = notifIDB[:lastcn]
+	}
+
+	return notifIDB, nil
+}
+
 func (s *PASession) Release() {
 	s.logger.Debug("Releasing audio session")
 }
@@ -216,25 +229,31 @@ func (s *masterSession) GetVolume() float32 {
 	var level float32
 
 	if s.isOutput {
+		//nolint:exhaustruct
 		request := proto.GetSinkInfo{
 			SinkIndex: s.streamIndex,
 		}
-		reply := proto.GetSinkInfoReply{}
+
+		var reply proto.GetSinkInfoReply
 
 		if err := s.client.Request(&request, &reply); err != nil {
 			s.logger.Warnw("Failed to get session volume", "error", err)
+
 			return 0
 		}
 
 		level = parseChannelVolumes(reply.ChannelVolumes)
 	} else {
+		//nolint:exhaustruct
 		request := proto.GetSourceInfo{
 			SourceIndex: s.streamIndex,
 		}
-		reply := proto.GetSourceInfoReply{}
+
+		var reply proto.GetSourceInfoReply
 
 		if err := s.client.Request(&request, &reply); err != nil {
 			s.logger.Warnw("Failed to get session volume", "error", err)
+
 			return 0
 		}
 
@@ -250,11 +269,13 @@ func (s *masterSession) SetVolume(v float32) error {
 	volumes := createChannelVolumes(s.streamChannels, v)
 
 	if s.isOutput {
+		//nolint:exhaustruct
 		request = &proto.SetSinkVolume{
 			SinkIndex:      s.streamIndex,
 			ChannelVolumes: volumes,
 		}
 	} else {
+		//nolint:exhaustruct
 		request = &proto.SetSourceVolume{
 			SourceIndex:    s.streamIndex,
 			ChannelVolumes: volumes,

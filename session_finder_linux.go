@@ -22,6 +22,7 @@ func newSessionFinder(logger *zap.SugaredLogger) (*PASessionFinder, error) {
 	client, conn, err := proto.Connect("")
 	if err != nil {
 		logger.Warnw("Failed to establish PulseAudio connection", "error", err)
+
 		return nil, fmt.Errorf("establish PulseAudio connection: %w", err)
 	}
 
@@ -30,10 +31,11 @@ func newSessionFinder(logger *zap.SugaredLogger) (*PASessionFinder, error) {
 			"application.name": proto.PropListString("deej"),
 		},
 	}
-	reply := proto.SetClientNameReply{}
+
+	var reply proto.SetClientNameReply
 
 	if err := client.Request(&request, &reply); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("set client name: %w", err)
 	}
 
 	sf := &PASessionFinder{
@@ -44,22 +46,28 @@ func newSessionFinder(logger *zap.SugaredLogger) (*PASessionFinder, error) {
 		Updates:       make(chan struct{}),
 	}
 
-	client.Callback = func(val interface{}) {
-		switch val := val.(type) {
-		case *proto.SubscribeEvent:
-			if val.Event.GetFacility() == proto.EventSinkSinkInput {
-				switch val.Event.GetType() {
-				case proto.EventNew:
-					logger.Info("Received new sink event")
-				case proto.EventRemove:
-					logger.Info("Received remove sink event")
-				default:
-					return
-				}
+	client.Callback = func(ival interface{}) {
+		val, ok := ival.(*proto.SubscribeEvent)
 
-				sf.Updates <- struct{}{}
-			}
+		if !ok {
+			return
 		}
+
+		if val.Event.GetFacility() != proto.EventSinkSinkInput {
+			return
+		}
+
+		//nolint: exhaustive // we are not exhaustive here.
+		switch val.Event.GetType() {
+		case proto.EventNew:
+			logger.Info("Received new sink event")
+		case proto.EventRemove:
+			logger.Info("Received remove sink event")
+		default:
+			return
+		}
+
+		sf.Updates <- struct{}{}
 	}
 
 	err = client.Request(&proto.Subscribe{Mask: proto.SubscriptionMaskAll}, nil)
@@ -94,6 +102,7 @@ func (sf *PASessionFinder) GetAllSessions() ([]Session, error) {
 	// enumerate sink inputs and add sessions along the way
 	if err := sf.enumerateAndAddSessions(&sessions); err != nil {
 		sf.logger.Warnw("Failed to enumerate audio sessions", "error", err)
+
 		return nil, fmt.Errorf("enumerate audio sessions: %w", err)
 	}
 
@@ -103,6 +112,7 @@ func (sf *PASessionFinder) GetAllSessions() ([]Session, error) {
 func (sf *PASessionFinder) Release() error {
 	if err := sf.conn.Close(); err != nil {
 		sf.logger.Warnw("Failed to close PulseAudio connection", "error", err)
+
 		return fmt.Errorf("close PulseAudio connection: %w", err)
 	}
 
@@ -111,14 +121,17 @@ func (sf *PASessionFinder) Release() error {
 	return nil
 }
 
-func (sf *PASessionFinder) getMasterSinkSession() (Session, error) {
+func (sf *PASessionFinder) getMasterSinkSession() (*masterSession, error) {
+	//nolint:exhaustruct
 	request := proto.GetSinkInfo{
 		SinkIndex: proto.Undefined,
 	}
-	reply := proto.GetSinkInfoReply{}
+
+	var reply proto.GetSinkInfoReply
 
 	if err := sf.client.Request(&request, &reply); err != nil {
 		sf.logger.Warnw("Failed to get master sink info", "error", err)
+
 		return nil, fmt.Errorf("get master sink info: %w", err)
 	}
 
@@ -128,14 +141,17 @@ func (sf *PASessionFinder) getMasterSinkSession() (Session, error) {
 	return sink, nil
 }
 
-func (sf *PASessionFinder) getMasterSourceSession() (Session, error) {
+func (sf *PASessionFinder) getMasterSourceSession() (*masterSession, error) {
+	//nolint:exhaustruct
 	request := proto.GetSourceInfo{
 		SourceIndex: proto.Undefined,
 	}
-	reply := proto.GetSourceInfoReply{}
+
+	var reply proto.GetSourceInfoReply
 
 	if err := sf.client.Request(&request, &reply); err != nil {
 		sf.logger.Warnw("Failed to get master source info", "error", err)
+
 		return nil, fmt.Errorf("get master source info: %w", err)
 	}
 
@@ -151,6 +167,7 @@ func (sf *PASessionFinder) enumerateAndAddSessions(sessions *[]Session) error {
 
 	if err := sf.client.Request(&request, &reply); err != nil {
 		sf.logger.Warnw("Failed to get sink input list", "error", err)
+
 		return fmt.Errorf("get sink input list: %w", err)
 	}
 
@@ -169,7 +186,6 @@ func (sf *PASessionFinder) enumerateAndAddSessions(sessions *[]Session) error {
 
 		// add it to our slice
 		*sessions = append(*sessions, newSession)
-
 	}
 
 	return nil

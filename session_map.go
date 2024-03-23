@@ -29,35 +29,39 @@ const (
 	inputSessionName  = "mic"    // microphone input level
 
 	// some targets need to be transformed before their correct audio sessions can be accessed.
-	// this prefix identifies those targets to ensure they don't contradict with another similarly-named process
+	// this prefix identifies those targets to ensure they don't contradict with another similarly-named process.
 	specialTargetTransformPrefix = "deej."
 
-	// targets all currently unmapped sessions (experimental)
+	// targets all currently unmapped sessions (experimental).
 	specialTargetAllUnmapped = "unmapped"
+
+	newSessionVolumeDelay = 100 * time.Millisecond
 )
 
-// this matches friendly device names (on Windows), e.g. "Headphones (Realtek Audio)"
+// this matches friendly device names (on Windows), e.g. "Headphones (Realtek Audio)".
 var deviceSessionKeyPattern = regexp.MustCompile(`^.+ \(.+\)$`)
 
-func newSessionMap(deej *Deej, logger *zap.SugaredLogger, sessionFinder *PASessionFinder) (*sessionMap, error) {
+func newSessionMap(deej *Deej, logger *zap.SugaredLogger, sessionFinder *PASessionFinder) *sessionMap {
 	logger = logger.Named("sessions")
 
 	m := &sessionMap{
-		deej:          deej,
-		logger:        logger,
-		m:             make(map[string][]Session),
-		lock:          &sync.Mutex{},
-		sessionFinder: sessionFinder,
+		deej:             deej,
+		logger:           logger,
+		m:                make(map[string][]Session),
+		unmappedSessions: make([]Session, 0),
+		lock:             &sync.Mutex{},
+		sessionFinder:    sessionFinder,
 	}
 
 	logger.Debug("Created session map instance")
 
-	return m, nil
+	return m
 }
 
 func (m *sessionMap) initialize() error {
 	if err := m.getAndAddSessions(); err != nil {
 		m.logger.Warnw("Failed to get all sessions during session map initialization", "error", err)
+
 		return fmt.Errorf("get all sessions during init: %w", err)
 	}
 
@@ -71,6 +75,7 @@ func (m *sessionMap) initialize() error {
 func (m *sessionMap) release() error {
 	if err := m.sessionFinder.Release(); err != nil {
 		m.logger.Warnw("Failed to release session finder during session map release", "error", err)
+
 		return fmt.Errorf("release session finder during release: %w", err)
 	}
 
@@ -78,7 +83,7 @@ func (m *sessionMap) release() error {
 }
 
 // assumes the session map is clean!
-// only call on a new session map or as part of refreshSessions which calls reset
+// only call on a new session map or as part of refreshSessions which calls reset.
 func (m *sessionMap) getAndAddSessions() error {
 	m.unmappedSessions = nil
 
@@ -87,6 +92,7 @@ func (m *sessionMap) getAndAddSessions() error {
 	sessions, err := m.sessionFinder.GetAllSessions()
 	if err != nil {
 		m.logger.Warnw("Failed to get sessions from session finder", "error", err)
+
 		return fmt.Errorf("get sessions from SessionFinder: %w", err)
 	}
 
@@ -148,7 +154,7 @@ func (m *sessionMap) refreshSessions() {
 	// create fake slider move event for each slider to refresh volume for all sessions to current values.
 	// 100 ms delay is because it for some reason does not register properly if set immediately.
 	go func() {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(newSessionVolumeDelay)
 
 		for slider, value := range m.deej.serial.currentSliderPercentValues {
 			m.handleSliderMoveEvent(SliderMoveEvent{
@@ -161,7 +167,7 @@ func (m *sessionMap) refreshSessions() {
 
 // returns true if a session is not currently mapped to any slider, false otherwise
 // special sessions (master, system, mic) and device-specific sessions always count as mapped,
-// even when absent from the config. this makes sense for every current feature that uses "unmapped sessions"
+// even when absent from the config. this makes sense for every current feature that uses "unmapped sessions".
 func (m *sessionMap) sessionMapped(session Session) bool {
 	// count master/system/mic as mapped
 	if funk.ContainsString([]string{masterSessionName, systemSessionName, inputSessionName}, session.Key()) {
@@ -176,9 +182,8 @@ func (m *sessionMap) sessionMapped(session Session) bool {
 	matchFound := false
 
 	// look through the actual mappings
-	m.deej.config.SliderMapping.iterate(func(sliderIdx int, targets []string) {
+	m.deej.config.SliderMapping.iterate(func(_ int, targets []string) {
 		for _, target := range targets {
-
 			// ignore special transforms
 			if m.targetHasSpecialTransform(target) {
 				continue
@@ -189,6 +194,7 @@ func (m *sessionMap) sessionMapped(session Session) bool {
 
 			if target == session.Key() {
 				matchFound = true
+
 				return
 			}
 		}
@@ -216,7 +222,6 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 
 		// for each resolved target...
 		for _, resolvedTarget := range resolvedTargets {
-
 			// check the map for matching sessions
 			sessions, ok := m.get(resolvedTarget)
 
@@ -228,8 +233,10 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 			// iterate all matching sessions and adjust the volume of each one
 			for _, session := range sessions {
 				m.logger.Debugf("Getting volume for session: %+v", session)
+
 				if session.GetVolume() != event.PercentValue {
 					m.logger.Debugf("Setting volume for session: %+v", session)
+
 					if err := session.SetVolume(event.PercentValue); err != nil {
 						m.logger.Warnw("Failed to set target session volume", "error", err)
 					}
@@ -257,9 +264,7 @@ func (m *sessionMap) resolveTarget(target string) []string {
 
 func (m *sessionMap) applyTargetTransform(specialTargetName string) []string {
 	// select the transformation based on its name
-	switch specialTargetName {
-	// get currently unmapped sessions
-	case specialTargetAllUnmapped:
+	if specialTargetName == specialTargetAllUnmapped {
 		targetKeys := make([]string, len(m.unmappedSessions))
 		for sessionIdx, session := range m.unmappedSessions {
 			targetKeys[sessionIdx] = session.Key()
@@ -290,6 +295,7 @@ func (m *sessionMap) get(key string) ([]Session, bool) {
 	defer m.lock.Unlock()
 
 	value, ok := m.m[key]
+
 	return value, ok
 }
 

@@ -5,5 +5,5 @@ import (
 )
 
 func getCurrentWindowProcessNames() ([]string, error) {
-	return nil, errors.New("Not implemented")
+	return nil, errors.New("not implemented")
 }

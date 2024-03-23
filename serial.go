@@ -16,14 +16,21 @@ import (
 	"github.com/omriharel/deej/util"
 )
 
-// SerialIO provides a deej-aware abstraction layer to managing serial I/O
+const (
+	serialDataBits = 8
+	serialStopBits = 1
+
+	maxDirtyVolume = 1023.0
+)
+
+// SerialIO provides a deej-aware abstraction layer to managing serial I/O.
 type SerialIO struct {
 	deej   *Deej
 	logger *zap.SugaredLogger
 
 	stopChannel chan bool
 	connected   bool
-	connOptions serial.OpenOptions
+	connOptions serial.OpenOptions `exhaustruct:"optional"`
 	conn        io.ReadWriteCloser
 
 	lastKnownNumSliders        int
@@ -32,7 +39,7 @@ type SerialIO struct {
 	sliderMoveConsumers []chan SliderMoveEvent
 }
 
-// SliderMoveEvent represents a single slider move captured by deej
+// SliderMoveEvent represents a single slider move captured by deej.
 type SliderMoveEvent struct {
 	SliderID     int
 	PercentValue float32
@@ -40,18 +47,25 @@ type SliderMoveEvent struct {
 
 var expectedLinePattern = regexp.MustCompile(`^\d{1,4}(\|\d{1,4})*\r\n$`)
 
+var (
+	ErrSerialConnectionActive = errors.New("serial: connection already active")
+	ErrFirstSliderOOB         = errors.New("serial: first slider value out of bounds")
+)
+
 // NewSerialIO creates a SerialIO instance that uses the provided deej
-// instance's connection info to establish communications with the arduino chip
+// instance's connection info to establish communications with the arduino chip.
 func NewSerialIO(deej *Deej, logger *zap.SugaredLogger) (*SerialIO, error) {
 	logger = logger.Named("serial")
 
 	sio := &SerialIO{
-		deej:                deej,
-		logger:              logger,
-		stopChannel:         make(chan bool),
-		connected:           false,
-		conn:                nil,
-		sliderMoveConsumers: []chan SliderMoveEvent{},
+		deej:                       deej,
+		logger:                     logger,
+		stopChannel:                make(chan bool),
+		connected:                  false,
+		conn:                       nil,
+		sliderMoveConsumers:        []chan SliderMoveEvent{},
+		lastKnownNumSliders:        0,
+		currentSliderPercentValues: make([]float32, 0),
 	}
 
 	logger.Debug("Created serial i/o instance")
@@ -62,12 +76,13 @@ func NewSerialIO(deej *Deej, logger *zap.SugaredLogger) (*SerialIO, error) {
 	return sio, nil
 }
 
-// Start attempts to connect to our arduino chip
+// Start attempts to connect to our arduino chip.
 func (sio *SerialIO) Start() error {
 	// don't allow multiple concurrent connections
 	if sio.connected {
 		sio.logger.Warn("Already connected, can't start another without closing first")
-		return errors.New("serial: connection already active")
+
+		return ErrSerialConnectionActive
 	}
 
 	// set minimum read size according to platform (0 for windows, 1 for linux)
@@ -78,11 +93,12 @@ func (sio *SerialIO) Start() error {
 		minimumReadSize = 1
 	}
 
+	//nolint:exhaustruct
 	sio.connOptions = serial.OpenOptions{
 		PortName:        sio.deej.config.ConnectionInfo.COMPort,
 		BaudRate:        uint(sio.deej.config.ConnectionInfo.BaudRate),
-		DataBits:        8,
-		StopBits:        1,
+		DataBits:        serialDataBits,
+		StopBits:        serialStopBits,
 		MinimumReadSize: uint(minimumReadSize),
 	}
 
@@ -92,11 +108,12 @@ func (sio *SerialIO) Start() error {
 		"minReadSize", minimumReadSize)
 
 	var err error
+
 	sio.conn, err = serial.Open(sio.connOptions)
 	if err != nil {
-
 		// might need a user notification here, TBD
 		sio.logger.Warnw("Failed to open serial connection", "error", err)
+
 		return fmt.Errorf("open serial connection: %w", err)
 	}
 
@@ -123,7 +140,7 @@ func (sio *SerialIO) Start() error {
 	return nil
 }
 
-// Stop signals us to shut down our serial connection, if one is active
+// Stop signals us to shut down our serial connection, if one is active.
 func (sio *SerialIO) Stop() {
 	if sio.connected {
 		sio.logger.Debug("Shutting down serial connection")
@@ -134,7 +151,7 @@ func (sio *SerialIO) Stop() {
 }
 
 // SubscribeToSliderMoveEvents returns an unbuffered channel that receives
-// a sliderMoveEvent struct every time a slider moves
+// a sliderMoveEvent struct every time a slider moves.
 func (sio *SerialIO) SubscribeToSliderMoveEvents() chan SliderMoveEvent {
 	ch := make(chan SliderMoveEvent)
 	sio.sliderMoveConsumers = append(sio.sliderMoveConsumers, ch)
@@ -156,13 +173,13 @@ func (sio *SerialIO) setupOnConfigReload() {
 			// is still cleared. this is kind of ugly, but shouldn't cause any issues
 			go func() {
 				<-time.After(stopDelay)
+
 				sio.lastKnownNumSliders = 0
 			}()
 
 			// if connection params have changed, attempt to stop and start the connection
 			if sio.deej.config.ConnectionInfo.COMPort != sio.connOptions.PortName ||
 				uint(sio.deej.config.ConnectionInfo.BaudRate) != sio.connOptions.BaudRate {
-
 				sio.logger.Info("Detected change in connection parameters, attempting to renew connection")
 				sio.Stop()
 
@@ -197,17 +214,10 @@ func (sio *SerialIO) readLine(logger *zap.SugaredLogger, reader *bufio.Reader) c
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
-
-				if sio.deej.Verbose() {
-					logger.Warnw("Failed to read line from serial", "error", err, "line", line)
-				}
+				logger.Warnw("Failed to read line from serial", "error", err, "line", line)
 
 				// just ignore the line, the read loop will stop after this
 				return
-			}
-
-			if sio.deej.Verbose() {
-				logger.Debugw("Read new line", "line", line)
 			}
 
 			// deliver the line to the channel
@@ -247,42 +257,13 @@ func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
 
 	// for each slider:
 	moveEvents := []SliderMoveEvent{}
+
+	var err error
+
 	for sliderIdx, stringValue := range splitLine {
-
-		// convert string values to integers ("1023" -> 1023)
-		number, _ := strconv.Atoi(stringValue)
-
-		// turns out the first line could come out dirty sometimes (i.e. "4558|925|41|643|220")
-		// so let's check the first number for correctness just in case
-		if sliderIdx == 0 && number > 1023 {
-			sio.logger.Debugw("Got malformed line from serial, ignoring", "line", line)
-			return
-		}
-
-		// map the value from raw to a "dirty" float between 0 and 1 (e.g. 0.15451...)
-		dirtyFloat := float32(number) / 1023.0
-
-		// normalize it to an actual volume scalar between 0.0 and 1.0 with 2 points of precision
-		normalizedScalar := util.NormalizeScalar(dirtyFloat)
-
-		// if sliders are inverted, take the complement of 1.0
-		if sio.deej.config.InvertSliders {
-			normalizedScalar = 1 - normalizedScalar
-		}
-
-		// check if it changes the desired state (could just be a jumpy raw slider value)
-		if util.SignificantlyDifferent(sio.currentSliderPercentValues[sliderIdx], normalizedScalar, sio.deej.config.NoiseReductionLevel) {
-			// if it does, update the saved value and create a move event
-			sio.currentSliderPercentValues[sliderIdx] = normalizedScalar
-
-			moveEvents = append(moveEvents, SliderMoveEvent{
-				SliderID:     sliderIdx,
-				PercentValue: normalizedScalar,
-			})
-
-			if sio.deej.Verbose() {
-				logger.Debugw("Slider moved", "event", moveEvents[len(moveEvents)-1])
-			}
+		moveEvents, err = sio.writeSliderMoveEvent(sliderIdx, stringValue, moveEvents)
+		if err != nil {
+			logger.Warnw("Failed to write slider move event", "error", err)
 		}
 	}
 
@@ -294,4 +275,49 @@ func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
 			}
 		}
 	}
+}
+
+func (sio *SerialIO) writeSliderMoveEvent(
+	sliderIdx int, stringValue string,
+	moveEvents []SliderMoveEvent,
+) ([]SliderMoveEvent, error) {
+	// convert string values to integers ("1023" -> 1023)
+	number, err := strconv.Atoi(stringValue)
+	if err != nil {
+		return moveEvents, fmt.Errorf("convert string to int: %w", err)
+	}
+
+	// turns out the first line could come out dirty sometimes (i.e. "4558|925|41|643|220")
+	// so let's check the first number for correctness just in case
+	if sliderIdx == 0 && number > 1023 {
+		return moveEvents, fmt.Errorf("slider value is %d: %w", number, ErrFirstSliderOOB)
+	}
+
+	// map the value from raw to a "dirty" float between 0 and 1 (e.g. 0.15451...)
+	dirtyFloat := float32(number) / maxDirtyVolume
+
+	// normalize it to an actual volume scalar between 0.0 and 1.0 with 2 points of precision
+	normalizedScalar := util.NormalizeScalar(dirtyFloat)
+
+	// if sliders are inverted, take the complement of 1.0
+	if sio.deej.config.InvertSliders {
+		normalizedScalar = 1 - normalizedScalar
+	}
+
+	// check if it changes the desired state (could just be a jumpy raw slider value)
+	if util.SignificantlyDifferent(
+		sio.currentSliderPercentValues[sliderIdx],
+		normalizedScalar,
+		sio.deej.config.NoiseReductionLevel,
+	) {
+		// if it does, update the saved value and create a move event
+		sio.currentSliderPercentValues[sliderIdx] = normalizedScalar
+
+		moveEvents = append(moveEvents, SliderMoveEvent{
+			SliderID:     sliderIdx,
+			PercentValue: normalizedScalar,
+		})
+	}
+
+	return moveEvents, nil
 }

@@ -6,7 +6,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Session represents a single addressable audio session
+// Session represents a single addressable audio session.
 type Session interface {
 	GetVolume() float32
 	SetVolume(v float32) error
@@ -22,10 +22,10 @@ type Session interface {
 const (
 
 	// ideally these would share a common ground in baseSession
-	// but it will not call the child GetVolume correctly :/
+	// but it will not call the child GetVolume correctly :/.
 	sessionCreationLogMessage = "Created audio session instance"
 
-	// format this with s.humanReadableDesc and whatever the current volume is
+	// format this with s.humanReadableDesc and whatever the current volume is.
 	sessionStringFormat = "<session: %s, vol: %.2f>"
 )
 

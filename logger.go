@@ -2,45 +2,18 @@ package deej
 
 import (
 	"fmt"
-	"path/filepath"
 	"time"
 
-	"github.com/omriharel/deej/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-const (
-	buildTypeNone    = ""
-	buildTypeDev     = "dev"
-	buildTypeRelease = "release"
+// NewLogger provides a logger instance for the whole program.
+func NewLogger() (*zap.SugaredLogger, error) {
+	loggerConfig := zap.NewDevelopmentConfig()
 
-	logDirectory = "logs"
-	logFilename  = "deej-latest-run.log"
-)
-
-// NewLogger provides a logger instance for the whole program
-func NewLogger(buildType string) (*zap.SugaredLogger, error) {
-	var loggerConfig zap.Config
-
-	// release: info and above, log to file only (no UI)
-	if buildType == buildTypeRelease {
-		if err := util.EnsureDirExists(logDirectory); err != nil {
-			return nil, fmt.Errorf("ensure log directory exists: %w", err)
-		}
-
-		loggerConfig = zap.NewProductionConfig()
-
-		loggerConfig.OutputPaths = []string{filepath.Join(logDirectory, logFilename)}
-		loggerConfig.Encoding = "console"
-
-		// development: debug and above, log to stderr only, colorful
-	} else {
-		loggerConfig = zap.NewDevelopmentConfig()
-
-		// make it colorful
-		loggerConfig.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
-	}
+	// make it colorful
+	loggerConfig.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 
 	// all build types: make it readable
 	loggerConfig.EncoderConfig.EncodeCaller = nil

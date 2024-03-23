@@ -1,8 +1,8 @@
 package deej
 
 import (
+	"errors"
 	"fmt"
-	"path"
 	"strings"
 	"time"
 
@@ -14,14 +14,14 @@ import (
 )
 
 // CanonicalConfig provides application-wide access to configuration fields,
-// as well as loading/file watching logic for deej's configuration file
+// as well as loading/file watching logic for deej's configuration file.
 type CanonicalConfig struct {
 	SliderMapping *sliderMap
 
 	ConnectionInfo struct {
 		COMPort  string
 		BaudRate int
-	}
+	} `exhaustruct:"optional"`
 
 	InvertSliders bool
 
@@ -58,18 +58,23 @@ const (
 	defaultBaudRate = 9600
 )
 
-// has to be defined as a non-constant because we're using path.Join
-var internalConfigPath = path.Join(".", logDirectory)
+var ErrConfigDoesNotExist = errors.New("config file does not exist")
 
-// NewConfig creates a config instance for the deej object and sets up viper instances for deej's config files
+// NewConfig creates a config instance for the deej object and sets up viper instances for deej's config files.
 func NewConfig(logger *zap.SugaredLogger, notifier Notifier) (*CanonicalConfig, error) {
 	logger = logger.Named("config")
 
 	cc := &CanonicalConfig{
-		logger:             logger,
-		notifier:           notifier,
-		reloadConsumers:    []chan bool{},
-		stopWatcherChannel: make(chan bool),
+		SliderMapping:       nil,
+		InvertSliders:       false,
+		NoiseReductionLevel: "default",
+		logger:              logger,
+		notifier:            notifier,
+		reloadConsumers:     []chan bool{},
+		stopWatcherChannel:  make(chan bool),
+
+		userConfig:     nil,
+		internalConfig: nil,
 	}
 
 	// distinguish between the user-provided config (config.yaml) and the internal config (logs/preferences.yaml)
@@ -86,7 +91,6 @@ func NewConfig(logger *zap.SugaredLogger, notifier Notifier) (*CanonicalConfig, 
 	internalConfig := viper.New()
 	internalConfig.SetConfigName(internalConfigName)
 	internalConfig.SetConfigType(configType)
-	internalConfig.AddConfigPath(internalConfigPath)
 
 	cc.userConfig = userConfig
 	cc.internalConfig = internalConfig
@@ -96,7 +100,7 @@ func NewConfig(logger *zap.SugaredLogger, notifier Notifier) (*CanonicalConfig, 
 	return cc, nil
 }
 
-// Load reads deej's config files from disk and tries to parse them
+// Load reads deej's config files from disk and tries to parse them.
 func (cc *CanonicalConfig) Load() error {
 	cc.logger.Debugw("Loading config", "path", userConfigFilepath)
 
@@ -104,9 +108,9 @@ func (cc *CanonicalConfig) Load() error {
 	if !util.FileExists(userConfigFilepath) {
 		cc.logger.Warnw("Config file not found", "path", userConfigFilepath)
 		cc.notifier.Notify("Can't find configuration!",
-			fmt.Sprintf("%s must be in the same directory as deej. Please re-launch", userConfigFilepath))
+			userConfigFilepath+" must be in the same directory as deej. Please re-launch")
 
-		return fmt.Errorf("config file doesn't exist: %s", userConfigFilepath)
+		return fmt.Errorf("checking for %s: %w", userConfigFilepath, ErrConfigDoesNotExist)
 	}
 
 	// load the user config
@@ -130,10 +134,7 @@ func (cc *CanonicalConfig) Load() error {
 	}
 
 	// canonize the configuration with viper's helpers
-	if err := cc.populateFromVipers(); err != nil {
-		cc.logger.Warnw("Failed to populate config fields", "error", err)
-		return fmt.Errorf("populate config fields: %w", err)
-	}
+	cc.populateFromVipers()
 
 	cc.logger.Info("Loaded config successfully")
 	cc.logger.Infow("Config values",
@@ -144,7 +145,7 @@ func (cc *CanonicalConfig) Load() error {
 	return nil
 }
 
-// SubscribeToChanges allows external components to receive updates when the config is reloaded
+// SubscribeToChanges allows external components to receive updates when the config is reloaded.
 func (cc *CanonicalConfig) SubscribeToChanges() chan bool {
 	c := make(chan bool)
 	cc.reloadConsumers = append(cc.reloadConsumers, c)
@@ -153,7 +154,7 @@ func (cc *CanonicalConfig) SubscribeToChanges() chan bool {
 }
 
 // WatchConfigFileChanges starts watching for configuration file changes
-// and attempts reloading the config when they happen
+// and attempts reloading the config when they happen.
 func (cc *CanonicalConfig) WatchConfigFileChanges() {
 	cc.logger.Debugw("Starting to watch user config file for changes", "path", userConfigFilepath)
 
@@ -169,12 +170,10 @@ func (cc *CanonicalConfig) WatchConfigFileChanges() {
 	cc.userConfig.OnConfigChange(func(event fsnotify.Event) {
 		// when we get a write event...
 		if event.Op&fsnotify.Write == fsnotify.Write {
-
 			now := time.Now()
 
 			// ... check if it's not a duplicate (many editors will write to a file twice)
 			if lastAttemptedReload.Add(minTimeBetweenReloadAttempts).Before(now) {
-
 				// and attempt reload if appropriate
 				cc.logger.Debugw("Config file modified, attempting reload", "event", event)
 
@@ -202,12 +201,12 @@ func (cc *CanonicalConfig) WatchConfigFileChanges() {
 	cc.userConfig.OnConfigChange(nil)
 }
 
-// StopWatchingConfigFile signals our filesystem watcher to stop
+// StopWatchingConfigFile signals our filesystem watcher to stop.
 func (cc *CanonicalConfig) StopWatchingConfigFile() {
 	cc.stopWatcherChannel <- true
 }
 
-func (cc *CanonicalConfig) populateFromVipers() error {
+func (cc *CanonicalConfig) populateFromVipers() {
 	// merge the slider mappings from the user and internal configs
 	cc.SliderMapping = sliderMapFromConfigs(
 		cc.userConfig.GetStringMapStringSlice(configKeySliderMapping),
@@ -231,8 +230,6 @@ func (cc *CanonicalConfig) populateFromVipers() error {
 	cc.NoiseReductionLevel = cc.userConfig.GetString(configKeyNoiseReductionLevel)
 
 	cc.logger.Debug("Populated config fields from vipers")
-
-	return nil
 }
 
 func (cc *CanonicalConfig) onConfigReloaded() {

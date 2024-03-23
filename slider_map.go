@@ -66,6 +66,7 @@ func (m *sliderMap) get(key int) ([]string, bool) {
 	defer m.lock.Unlock()
 
 	value, ok := m.m[key]
+
 	return value, ok
 }
 
