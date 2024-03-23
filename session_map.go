@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/omriharel/deej/util"
 	"github.com/thoas/go-funk"
 	"go.uber.org/zap"
 )
@@ -19,10 +18,9 @@ type sessionMap struct {
 	m    map[string][]Session
 	lock sync.Locker
 
-	sessionFinder SessionFinder
+	sessionFinder *PASessionFinder
 
-	lastSessionRefresh time.Time
-	unmappedSessions   []Session
+	unmappedSessions []Session
 }
 
 const (
@@ -34,30 +32,14 @@ const (
 	// this prefix identifies those targets to ensure they don't contradict with another similarly-named process
 	specialTargetTransformPrefix = "deej."
 
-	// targets the currently active window (Windows-only, experimental)
-	specialTargetCurrentWindow = "current"
-
 	// targets all currently unmapped sessions (experimental)
 	specialTargetAllUnmapped = "unmapped"
-
-	// this threshold constant assumes that re-acquiring all sessions is a kind of expensive operation,
-	// and needs to be limited in some manner. this value was previously user-configurable through a config
-	// key "process_refresh_frequency", but exposing this type of implementation detail seems wrong now
-	minTimeBetweenSessionRefreshes = time.Second * 5
-
-	// determines whether the map should be refreshed when a slider moves.
-	// this is a bit greedy but allows us to ensure sessions are always re-acquired, which is
-	// especially important for process groups (because you can have one ongoing session
-	// always preventing lookup of other processes bound to its slider, which forces the user
-	// to manually refresh sessions). a cleaner way to do this down the line is by registering to notifications
-	// whenever a new session is added, but that's too hard to justify for how easy this solution is
-	maxTimeBetweenSessionRefreshes = time.Second * 45
 )
 
 // this matches friendly device names (on Windows), e.g. "Headphones (Realtek Audio)"
 var deviceSessionKeyPattern = regexp.MustCompile(`^.+ \(.+\)$`)
 
-func newSessionMap(deej *Deej, logger *zap.SugaredLogger, sessionFinder SessionFinder) (*sessionMap, error) {
+func newSessionMap(deej *Deej, logger *zap.SugaredLogger, sessionFinder *PASessionFinder) (*sessionMap, error) {
 	logger = logger.Named("sessions")
 
 	m := &sessionMap{
@@ -81,6 +63,7 @@ func (m *sessionMap) initialize() error {
 
 	m.setupOnConfigReload()
 	m.setupOnSliderMove()
+	m.setupRefreshSessions()
 
 	return nil
 }
@@ -97,10 +80,9 @@ func (m *sessionMap) release() error {
 // assumes the session map is clean!
 // only call on a new session map or as part of refreshSessions which calls reset
 func (m *sessionMap) getAndAddSessions() error {
-
-	// mark that we're refreshing before anything else
-	m.lastSessionRefresh = time.Now()
 	m.unmappedSessions = nil
+
+	m.logger.Debug("Acquiring sessions")
 
 	sessions, err := m.sessionFinder.GetAllSessions()
 	if err != nil {
@@ -126,12 +108,9 @@ func (m *sessionMap) setupOnConfigReload() {
 	configReloadedChannel := m.deej.config.SubscribeToChanges()
 
 	go func() {
-		for {
-			select {
-			case <-configReloadedChannel:
-				m.logger.Info("Detected config reload, attempting to re-acquire all audio sessions")
-				m.refreshSessions(false)
-			}
+		for range configReloadedChannel {
+			m.logger.Info("Detected config reload, attempting to re-acquire all audio sessions")
+			m.refreshSessions()
 		}
 	}()
 }
@@ -140,38 +119,50 @@ func (m *sessionMap) setupOnSliderMove() {
 	sliderEventsChannel := m.deej.serial.SubscribeToSliderMoveEvents()
 
 	go func() {
-		for {
-			select {
-			case event := <-sliderEventsChannel:
-				m.handleSliderMoveEvent(event)
-			}
+		for event := range sliderEventsChannel {
+			m.handleSliderMoveEvent(event)
 		}
 	}()
 }
 
-// performance: explain why force == true at every such use to avoid unintended forced refresh spams
-func (m *sessionMap) refreshSessions(force bool) {
+func (m *sessionMap) setupRefreshSessions() {
+	go func() {
+		for range m.sessionFinder.Updates {
+			m.refreshSessions()
+		}
+	}()
+}
 
-	// make sure enough time passed since the last refresh, unless force is true in which case always clear
-	if !force && m.lastSessionRefresh.Add(minTimeBetweenSessionRefreshes).After(time.Now()) {
-		return
-	}
-
+func (m *sessionMap) refreshSessions() {
 	// clear and release sessions first
 	m.clear()
 
 	if err := m.getAndAddSessions(); err != nil {
 		m.logger.Warnw("Failed to re-acquire all audio sessions", "error", err)
-	} else {
-		m.logger.Debug("Re-acquired sessions successfully")
+
+		return
 	}
+
+	m.logger.Debug("Re-acquired sessions successfully")
+
+	// create fake slider move event for each slider to refresh volume for all sessions to current values.
+	// 100 ms delay is because it for some reason does not register properly if set immediately.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+
+		for slider, value := range m.deej.serial.currentSliderPercentValues {
+			m.handleSliderMoveEvent(SliderMoveEvent{
+				SliderID: slider,
+				PercentValue: value,
+			})
+		}
+	}()
 }
 
 // returns true if a session is not currently mapped to any slider, false otherwise
 // special sessions (master, system, mic) and device-specific sessions always count as mapped,
 // even when absent from the config. this makes sense for every current feature that uses "unmapped sessions"
 func (m *sessionMap) sessionMapped(session Session) bool {
-
 	// count master/system/mic as mapped
 	if funk.ContainsString([]string{masterSessionName, systemSessionName, inputSessionName}, session.Key()) {
 		return true
@@ -207,13 +198,6 @@ func (m *sessionMap) sessionMapped(session Session) bool {
 }
 
 func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
-
-	// first of all, ensure our session map isn't moldy
-	if m.lastSessionRefresh.Add(maxTimeBetweenSessionRefreshes).Before(time.Now()) {
-		m.logger.Debug("Stale session map detected on slider move, refreshing")
-		m.refreshSessions(true)
-	}
-
 	// get the targets mapped to this slider from the config
 	targets, ok := m.deej.config.SliderMapping.get(event.SliderID)
 
@@ -222,7 +206,6 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 		return
 	}
 
-	targetFound := false
 	adjustmentFailed := false
 
 	// for each possible target for this slider...
@@ -243,8 +226,6 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 				continue
 			}
 
-			targetFound = true
-
 			// iterate all matching sessions and adjust the volume of each one
 			for _, session := range sessions {
 				if session.GetVolume() != event.PercentValue {
@@ -257,17 +238,8 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 		}
 	}
 
-	// if we still haven't found a target or the volume adjustment failed, maybe look for the target again.
-	// processes could've opened since the last time this slider moved.
-	// if they haven't, the cooldown will take care to not spam it up
-	if !targetFound {
-		m.refreshSessions(false)
-	} else if adjustmentFailed {
-
-		// performance: the reason that forcing a refresh here is okay is that we'll only get here
-		// when a session's SetVolume call errored, such as in the case of a stale master session
-		// (or another, more catastrophic failure happens)
-		m.refreshSessions(true)
+	if adjustmentFailed {
+		m.logger.Warn("Adjustment failed for targets: %v", targets)
 	}
 }
 
@@ -292,24 +264,6 @@ func (m *sessionMap) applyTargetTransform(specialTargetName string) []string {
 
 	// select the transformation based on its name
 	switch specialTargetName {
-
-	// get current active window
-	case specialTargetCurrentWindow:
-		currentWindowProcessNames, err := util.GetCurrentWindowProcessNames()
-
-		// silently ignore errors here, as this is on deej's "hot path" (and it could just mean the user's running linux)
-		if err != nil {
-			return nil
-		}
-
-		// we could have gotten a non-lowercase names from that, so let's ensure we return ones that are lowercase
-		for targetIdx, target := range currentWindowProcessNames {
-			currentWindowProcessNames[targetIdx] = strings.ToLower(target)
-		}
-
-		// remove dupes
-		return funk.UniqString(currentWindowProcessNames)
-
 	// get currently unmapped sessions
 	case specialTargetAllUnmapped:
 		targetKeys := make([]string, len(m.unmappedSessions))

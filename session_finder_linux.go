@@ -8,15 +8,17 @@ import (
 	"go.uber.org/zap"
 )
 
-type paSessionFinder struct {
+type PASessionFinder struct {
 	logger        *zap.SugaredLogger
 	sessionLogger *zap.SugaredLogger
 
 	client *proto.Client
 	conn   net.Conn
+
+	Updates chan struct{}
 }
 
-func newSessionFinder(logger *zap.SugaredLogger) (SessionFinder, error) {
+func newSessionFinder(logger *zap.SugaredLogger) (*PASessionFinder, error) {
 	client, conn, err := proto.Connect("")
 	if err != nil {
 		logger.Warnw("Failed to establish PulseAudio connection", "error", err)
@@ -34,11 +36,35 @@ func newSessionFinder(logger *zap.SugaredLogger) (SessionFinder, error) {
 		return nil, err
 	}
 
-	sf := &paSessionFinder{
+	sf := &PASessionFinder{
 		logger:        logger.Named("session_finder"),
 		sessionLogger: logger.Named("sessions"),
 		client:        client,
 		conn:          conn,
+		Updates:       make(chan struct{}),
+	}
+
+	client.Callback = func(val interface{}) {
+		switch val := val.(type) {
+		case *proto.SubscribeEvent:
+			if val.Event.GetFacility() == proto.EventSinkSinkInput {
+				switch val.Event.GetType() {
+				case proto.EventNew:
+					logger.Info("Received new sink event")
+				case proto.EventRemove:
+					logger.Info("Received remove sink event")
+				default:
+					return
+				}
+
+				sf.Updates <- struct{}{}
+			}
+		}
+	}
+
+	err = client.Request(&proto.Subscribe{Mask: proto.SubscriptionMaskAll}, nil)
+	if err != nil {
+		panic(err)
 	}
 
 	sf.logger.Debug("Created PA session finder instance")
@@ -46,7 +72,7 @@ func newSessionFinder(logger *zap.SugaredLogger) (SessionFinder, error) {
 	return sf, nil
 }
 
-func (sf *paSessionFinder) GetAllSessions() ([]Session, error) {
+func (sf *PASessionFinder) GetAllSessions() ([]Session, error) {
 	sessions := []Session{}
 
 	// get the master sink session
@@ -74,7 +100,7 @@ func (sf *paSessionFinder) GetAllSessions() ([]Session, error) {
 	return sessions, nil
 }
 
-func (sf *paSessionFinder) Release() error {
+func (sf *PASessionFinder) Release() error {
 	if err := sf.conn.Close(); err != nil {
 		sf.logger.Warnw("Failed to close PulseAudio connection", "error", err)
 		return fmt.Errorf("close PulseAudio connection: %w", err)
@@ -85,7 +111,7 @@ func (sf *paSessionFinder) Release() error {
 	return nil
 }
 
-func (sf *paSessionFinder) getMasterSinkSession() (Session, error) {
+func (sf *PASessionFinder) getMasterSinkSession() (Session, error) {
 	request := proto.GetSinkInfo{
 		SinkIndex: proto.Undefined,
 	}
@@ -102,7 +128,7 @@ func (sf *paSessionFinder) getMasterSinkSession() (Session, error) {
 	return sink, nil
 }
 
-func (sf *paSessionFinder) getMasterSourceSession() (Session, error) {
+func (sf *PASessionFinder) getMasterSourceSession() (Session, error) {
 	request := proto.GetSourceInfo{
 		SourceIndex: proto.Undefined,
 	}
@@ -119,7 +145,7 @@ func (sf *paSessionFinder) getMasterSourceSession() (Session, error) {
 	return source, nil
 }
 
-func (sf *paSessionFinder) enumerateAndAddSessions(sessions *[]Session) error {
+func (sf *PASessionFinder) enumerateAndAddSessions(sessions *[]Session) error {
 	request := proto.GetSinkInputInfoList{}
 	reply := proto.GetSinkInputInfoListReply{}
 

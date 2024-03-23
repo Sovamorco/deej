@@ -1,8 +1,11 @@
 package deej
 
 import (
-	"errors"
 	"fmt"
+	"io"
+	"os/exec"
+	"strconv"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -12,9 +15,7 @@ import (
 // normal PulseAudio volume (100%)
 const maxVolume = 0x10000
 
-var errNoSuchProcess = errors.New("No such process")
-
-type paSession struct {
+type PASession struct {
 	baseSession
 
 	processName string
@@ -23,6 +24,8 @@ type paSession struct {
 
 	sinkInputIndex    uint32
 	sinkInputChannels byte
+	prevNotifID       int
+	prevNotifIDExpires time.Time
 }
 
 type masterSession struct {
@@ -41,9 +44,9 @@ func newPASession(
 	sinkInputIndex uint32,
 	sinkInputChannels byte,
 	processName string,
-) *paSession {
+) *PASession {
 
-	s := &paSession{
+	s := &PASession{
 		client:            client,
 		sinkInputIndex:    sinkInputIndex,
 		sinkInputChannels: sinkInputChannels,
@@ -93,7 +96,7 @@ func newMasterSession(
 	return s
 }
 
-func (s *paSession) GetVolume() float32 {
+func (s *PASession) GetVolume() float32 {
 	request := proto.GetSinkInputInfo{
 		SinkInputIndex: s.sinkInputIndex,
 	}
@@ -108,7 +111,7 @@ func (s *paSession) GetVolume() float32 {
 	return level
 }
 
-func (s *paSession) SetVolume(v float32) error {
+func (s *PASession) SetVolume(v float32) error {
 	volumes := createChannelVolumes(s.sinkInputChannels, v)
 	request := proto.SetSinkInputVolume{
 		SinkInputIndex: s.sinkInputIndex,
@@ -120,16 +123,94 @@ func (s *paSession) SetVolume(v float32) error {
 		return fmt.Errorf("adjust session volume: %w", err)
 	}
 
+	go s.notify(v)
+
 	s.logger.Debugw("Adjusting session volume", "to", fmt.Sprintf("%.2f", v))
 
 	return nil
 }
 
-func (s *paSession) Release() {
+func (s *PASession) notify(v float32) {
+	nsArgs := []string{
+		"-u", "low",
+		"-t", "1000",
+		"-a", "deej",
+		"-i", "deej",
+		"-p",
+		fmt.Sprintf("volume for %s changed to %.d%%", s.processName, int(v * 100)),
+	}
+
+	if s.prevNotifID != 0 {
+		nsArgs = append(nsArgs, "-r", strconv.Itoa(s.prevNotifID))
+	}
+	cmd := exec.Command("notify-send", nsArgs...)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		s.logger.Debugf("Failed to get stdout pipe: %+v", err)
+
+		return
+	}
+
+	err = cmd.Start()
+	if err != nil {
+		s.logger.Debugf("Failed to send notif: %+v", err)
+
+		return
+	}
+
+	notifIDB, err := io.ReadAll(stdout)
+	if err != nil {
+		s.logger.Debugf("Failed to read notif: %+v", err)
+	}
+
+	err = cmd.Wait()
+	if err != nil {
+		s.logger.Debugf("Failed to wait for notif: %+v", err)
+
+		return
+	}
+
+	lastcn := len(notifIDB) - 1
+	if notifIDB[lastcn] == '\n' {
+		notifIDB = notifIDB[:lastcn]
+	}
+
+	notifID, err := strconv.Atoi(string(notifIDB))
+	if err != nil {
+		s.logger.Debugf("Failed to convert notifID: %+v", err)
+
+		return
+	}
+
+	lastNotifID := s.prevNotifID
+
+	s.prevNotifID = notifID
+	s.prevNotifIDExpires = time.Now().Add(1 * time.Second)
+
+	if lastNotifID == 0 {
+		go func() {
+			for {
+				<-time.After(time.Until(s.prevNotifIDExpires))
+
+				if time.Now().After(s.prevNotifIDExpires) {
+					s.logger.Debug("Invalidating notif id: ", s.prevNotifID)
+					s.prevNotifID = 0
+					
+					return
+				}
+			}
+		}()
+	}
+
+	s.logger.Debug("Notif ID: ", s.prevNotifID)
+}
+
+func (s *PASession) Release() {
 	s.logger.Debug("Releasing audio session")
 }
 
-func (s *paSession) String() string {
+func (s *PASession) String() string {
 	return fmt.Sprintf(sessionStringFormat, s.humanReadableDesc, s.GetVolume())
 }
 
