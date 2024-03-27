@@ -3,6 +3,7 @@ package deej
 import (
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/jfreymuth/pulse/proto"
 	"go.uber.org/zap"
@@ -26,6 +27,8 @@ func newSessionFinder(logger *zap.SugaredLogger, notifier *VolumeNotifier) (*PAS
 
 		return nil, fmt.Errorf("establish PulseAudio connection: %w", err)
 	}
+	
+	client.SetTimeout(30 * time.Second)
 
 	request := proto.SetClientName{
 		Props: proto.PropList{
