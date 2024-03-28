@@ -19,6 +19,7 @@ linters:
   - goimports # conflicts with gofumpt
   - gci       # conflicts with gofumpt
   - gofumpt   # broken, just run task fmt
+  - gomoddirectives # use replacements for testing own forks
 
 linters-settings:
   ireturn:

@@ -35,7 +35,7 @@ tasks:
       - "golangci-lint" - (https://golangci-lint.run/usage/install/#local-installation)
     cmds:
     - task: fmt
-    - golangci-lint run -v {{.CLI_ARGS}} . ./cmd
+    - golangci-lint run -v {{.CLI_ARGS}} . ./config ./serial ./session ./sliders ./tray
 
   run:
     desc:    This task runs deej locally
@@ -44,10 +44,10 @@ tasks:
       Dependencies:
       - "go" has to be in PATH
     cmds:
-    - go run ./cmd
+    - go run .
 
   build:
     cmds:
-    - go build -o deej ./cmd
+    - go build -o deej .
     - sudo mv deej /etc/deej
     - systemctl restart --user deej
