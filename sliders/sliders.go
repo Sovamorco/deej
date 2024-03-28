@@ -189,10 +189,10 @@ func (s *Sliders) updateSessions(ctx context.Context) error {
 		return errorx.Decorate(err, "get all sessions")
 	}
 
+	unmappedSessions := make([]session.Session, 0, len(allSessions))
+
 	s.Lock()
 	defer s.Unlock()
-
-	unmappedSessions := make([]session.Session, 0, len(allSessions))
 
 	for _, sess := range allSessions {
 		mapped := s.mapSession(sess)
