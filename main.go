@@ -72,7 +72,7 @@ mainloop:
 	for {
 		select {
 		case line := <-sp.Lines:
-			logger.Debug().Bytes("line", line).Str("line", string(line)).Msg("Received serial line")
+			logger.Trace().Bytes("line", line).Str("line", string(line)).Msg("Received serial line")
 
 			slds.HandleLine(ctx, line)
 		case err := <-sp.Errors:

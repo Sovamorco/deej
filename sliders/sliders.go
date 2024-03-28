@@ -23,10 +23,10 @@ const (
 )
 
 type Slider struct {
-	sync.Mutex `exhaustruct:"optional"`
-	prevValue  float32
-	value      float32
-	sessions   map[string][]session.Session
+	sync.RWMutex `exhaustruct:"optional"`
+	prevValue    float32
+	value        float32
+	sessions     map[string][]session.Session
 }
 
 type Sliders struct {
@@ -36,6 +36,8 @@ type Sliders struct {
 }
 
 func NewSliders(ctx context.Context, mapping [][]string, sf *session.PASessionFinder) (*Sliders, error) {
+	logger := zerolog.Ctx(ctx)
+
 	sliders := &Sliders{
 		sliders: make([]*Slider, len(mapping)),
 		sf:      sf,
@@ -56,6 +58,8 @@ func NewSliders(ctx context.Context, mapping [][]string, sf *session.PASessionFi
 	}
 
 	go sliders.watchSessions(ctx)
+
+	logger.Debug().Msg("Sliders initialized")
 
 	return sliders, nil
 }
@@ -79,14 +83,15 @@ func (s *Sliders) watchSessions(ctx context.Context) {
 func (s *Sliders) HandleLine(ctx context.Context, line []byte) {
 	logger := zerolog.Ctx(ctx)
 
-	s.RLock()
-	defer s.RUnlock()
-
 	nvs := bytes.Split(line, []byte("|"))
+
+	s.RLock()
 
 	if len(nvs) < len(s.sliders) {
 		return
 	}
+
+	s.RUnlock()
 
 	for i, nv := range nvs {
 		nvi, err := strconv.Atoi(strings.TrimSpace(string(nv)))
@@ -98,11 +103,15 @@ func (s *Sliders) HandleLine(ctx context.Context, line []byte) {
 			return
 		}
 
+		s.RLock()
+
 		slider := s.sliders[i]
 
-		slider.Lock()
+		s.RUnlock()
 
 		nvf := float32(nvi) / maxValue
+
+		slider.Lock()
 
 		if math.Abs(float64(nvf-slider.prevValue)) < noiseMargin {
 			slider.Unlock()
@@ -113,23 +122,23 @@ func (s *Sliders) HandleLine(ctx context.Context, line []byte) {
 		slider.prevValue = slider.value
 		slider.value = nvf
 
+		slider.Unlock()
+
 		logger.Debug().
 			Int("idx", i).
 			Float32("value", slider.value).
 			Strs("targets", maps.Keys(slider.sessions)).
 			Msg("Slider value changed")
 
-		slider.Unlock()
-
-		slider.handleValueChange(ctx)
+		go slider.handleValueChange(ctx)
 	}
 }
 
 func (s *Slider) handleValueChange(ctx context.Context) {
 	logger := zerolog.Ctx(ctx)
 
-	s.Lock()
-	defer s.Unlock()
+	s.RLock()
+	defer s.RUnlock()
 
 	for _, sessions := range s.sessions {
 		for _, sess := range sessions {
@@ -142,8 +151,7 @@ func (s *Slider) handleValueChange(ctx context.Context) {
 }
 
 func (s *Sliders) FromConfig(ctx context.Context, userMapping [][]string) error {
-	s.Lock()
-	defer s.Unlock()
+	s.RLock()
 
 	for i, targets := range userMapping {
 		if i >= len(s.sliders) {
@@ -165,6 +173,8 @@ func (s *Sliders) FromConfig(ctx context.Context, userMapping [][]string) error 
 		slider.Unlock()
 	}
 
+	s.RUnlock()
+
 	err := s.updateSessions(ctx)
 	if err != nil {
 		return errorx.Decorate(err, "update sessions")
@@ -179,6 +189,9 @@ func (s *Sliders) updateSessions(ctx context.Context) error {
 		return errorx.Decorate(err, "get all sessions")
 	}
 
+	s.Lock()
+	defer s.Unlock()
+
 	unmappedSessions := make([]session.Session, 0, len(allSessions))
 
 	for _, sess := range allSessions {
@@ -190,13 +203,19 @@ func (s *Sliders) updateSessions(ctx context.Context) error {
 	}
 
 	for _, slider := range s.sliders {
+		slider.Lock()
+
 		for target := range slider.sessions {
 			if target == targetUnmapped {
-				slider.Lock()
 				slider.sessions[target] = unmappedSessions
-				slider.Unlock()
 			}
 		}
+
+		slider.Unlock()
+	}
+
+	for _, slider := range s.sliders {
+		go slider.handleValueChange(ctx)
 	}
 
 	return nil
