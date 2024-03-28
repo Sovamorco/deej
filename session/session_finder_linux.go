@@ -100,22 +100,6 @@ func (sf *PASessionFinder) GetAllSessions(ctx context.Context) ([]Session, error
 
 	sessions := []Session{}
 
-	// get the master sink session
-	masterSink, err := sf.getMasterSinkSession(ctx)
-	if err == nil {
-		sessions = append(sessions, masterSink)
-	} else {
-		logger.Warn().Err(err).Msg("Failed to get master audio sink session")
-	}
-
-	// get the master source session
-	masterSource, err := sf.getMasterSourceSession(ctx)
-	if err == nil {
-		sessions = append(sessions, masterSource)
-	} else {
-		logger.Warn().Err(err).Msg("Failed to get master audio source session")
-	}
-
 	// enumerate sink inputs and add sessions along the way
 	if err := sf.enumerateAndAddSessions(ctx, &sessions); err != nil {
 		logger.Warn().Err(err).Msg("Failed to enumerate audio sessions")
@@ -138,50 +122,6 @@ func (sf *PASessionFinder) Release(ctx context.Context) error {
 	logger.Debug().Msg("Released PA session finder instance")
 
 	return nil
-}
-
-func (sf *PASessionFinder) getMasterSinkSession(ctx context.Context) (*masterSession, error) {
-	logger := zerolog.Ctx(ctx)
-
-	//nolint:exhaustruct
-	request := proto.GetSinkInfo{
-		SinkIndex: proto.Undefined,
-	}
-
-	var reply proto.GetSinkInfoReply
-
-	if err := sf.client.Request(&request, &reply); err != nil {
-		logger.Warn().Err(err).Msg("Failed to get master sink info")
-
-		return nil, fmt.Errorf("get master sink info: %w", err)
-	}
-
-	// create the master sink session
-	sink := newMasterSession(logger, sf.client, reply.SinkIndex, reply.Channels, true)
-
-	return sink, nil
-}
-
-func (sf *PASessionFinder) getMasterSourceSession(ctx context.Context) (*masterSession, error) {
-	logger := zerolog.Ctx(ctx)
-
-	//nolint:exhaustruct
-	request := proto.GetSourceInfo{
-		SourceIndex: proto.Undefined,
-	}
-
-	var reply proto.GetSourceInfoReply
-
-	if err := sf.client.Request(&request, &reply); err != nil {
-		logger.Warn().Err(err).Msg("Failed to get master source info")
-
-		return nil, fmt.Errorf("get master source info: %w", err)
-	}
-
-	// create the master source session
-	source := newMasterSession(logger, sf.client, reply.SourceIndex, reply.Channels, false)
-
-	return source, nil
 }
 
 func (sf *PASessionFinder) enumerateAndAddSessions(ctx context.Context, sessions *[]Session) error {
