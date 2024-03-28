@@ -1,4 +1,4 @@
-package deej
+package session
 
 import (
 	"fmt"
@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/jfreymuth/pulse/proto"
-	"go.uber.org/zap"
+	"github.com/joomcode/errorx"
+	"github.com/rs/zerolog"
 )
 
 type PASessionFinder struct {
-	logger        *zap.SugaredLogger
-	sessionLogger *zap.SugaredLogger
+	logger        zerolog.Logger
+	sessionLogger zerolog.Logger
 	notifier      *VolumeNotifier
 
 	client *proto.Client
@@ -20,12 +21,12 @@ type PASessionFinder struct {
 	Updates chan struct{}
 }
 
-func newSessionFinder(logger *zap.SugaredLogger, notifier *VolumeNotifier) (*PASessionFinder, error) {
+func NewSessionFinder(logger zerolog.Logger, notifier *VolumeNotifier) (*PASessionFinder, error) {
 	client, conn, err := proto.Connect("")
 	if err != nil {
-		logger.Warnw("Failed to establish PulseAudio connection", "error", err)
+		logger.Warn().Err(err).Msg("Failed to establish PulseAudio connection")
 
-		return nil, fmt.Errorf("establish PulseAudio connection: %w", err)
+		return nil, errorx.Decorate(err, "establish pulseaudio connection")
 	}
 
 	client.SetTimeout(30 * time.Second)
@@ -43,46 +44,48 @@ func newSessionFinder(logger *zap.SugaredLogger, notifier *VolumeNotifier) (*PAS
 	}
 
 	sf := &PASessionFinder{
-		logger:        logger.Named("session_finder"),
-		sessionLogger: logger.Named("sessions"),
+		logger:        logger.With().Str("name", "session_finder").Logger(),
+		sessionLogger: logger.With().Str("name", "sessions").Logger(),
 		notifier:      notifier,
 		client:        client,
 		conn:          conn,
 		Updates:       make(chan struct{}),
 	}
 
-	client.Callback = func(ival interface{}) {
-		val, ok := ival.(*proto.SubscribeEvent)
-
-		if !ok {
-			return
-		}
-
-		if val.Event.GetFacility() != proto.EventSinkSinkInput {
-			return
-		}
-
-		//nolint: exhaustive // we are not exhaustive here.
-		switch val.Event.GetType() {
-		case proto.EventNew:
-			logger.Info("Received new sink event")
-		case proto.EventRemove:
-			logger.Info("Received remove sink event")
-		default:
-			return
-		}
-
-		sf.Updates <- struct{}{}
-	}
+	client.Callback = sf.paUpdateCallback
 
 	err = client.Request(&proto.Subscribe{Mask: proto.SubscriptionMaskAll}, nil)
 	if err != nil {
 		panic(err)
 	}
 
-	sf.logger.Debug("Created PA session finder instance")
+	sf.logger.Debug().Msg("Created PA session finder instance")
 
 	return sf, nil
+}
+
+func (sf *PASessionFinder) paUpdateCallback(ival any) {
+	val, ok := ival.(*proto.SubscribeEvent)
+
+	if !ok {
+		return
+	}
+
+	if val.Event.GetFacility() != proto.EventSinkSinkInput {
+		return
+	}
+
+	//nolint: exhaustive // we are not exhaustive here.
+	switch val.Event.GetType() {
+	case proto.EventNew:
+		sf.logger.Info().Msg("Received new sink event")
+	case proto.EventRemove:
+		sf.logger.Info().Msg("Received remove sink event")
+	default:
+		return
+	}
+
+	sf.Updates <- struct{}{}
 }
 
 func (sf *PASessionFinder) GetAllSessions() ([]Session, error) {
@@ -93,7 +96,7 @@ func (sf *PASessionFinder) GetAllSessions() ([]Session, error) {
 	if err == nil {
 		sessions = append(sessions, masterSink)
 	} else {
-		sf.logger.Warnw("Failed to get master audio sink session", "error", err)
+		sf.logger.Warn().Err(err).Msg("Failed to get master audio sink session")
 	}
 
 	// get the master source session
@@ -101,12 +104,12 @@ func (sf *PASessionFinder) GetAllSessions() ([]Session, error) {
 	if err == nil {
 		sessions = append(sessions, masterSource)
 	} else {
-		sf.logger.Warnw("Failed to get master audio source session", "error", err)
+		sf.logger.Warn().Err(err).Msg("Failed to get master audio source session")
 	}
 
 	// enumerate sink inputs and add sessions along the way
 	if err := sf.enumerateAndAddSessions(&sessions); err != nil {
-		sf.logger.Warnw("Failed to enumerate audio sessions", "error", err)
+		sf.logger.Warn().Err(err).Msg("Failed to enumerate audio sessions")
 
 		return nil, fmt.Errorf("enumerate audio sessions: %w", err)
 	}
@@ -116,12 +119,12 @@ func (sf *PASessionFinder) GetAllSessions() ([]Session, error) {
 
 func (sf *PASessionFinder) Release() error {
 	if err := sf.conn.Close(); err != nil {
-		sf.logger.Warnw("Failed to close PulseAudio connection", "error", err)
+		sf.logger.Warn().Err(err).Msg("Failed to close PulseAudio connection")
 
 		return fmt.Errorf("close PulseAudio connection: %w", err)
 	}
 
-	sf.logger.Debug("Released PA session finder instance")
+	sf.logger.Debug().Msg("Released PA session finder instance")
 
 	return nil
 }
@@ -135,7 +138,7 @@ func (sf *PASessionFinder) getMasterSinkSession() (*masterSession, error) {
 	var reply proto.GetSinkInfoReply
 
 	if err := sf.client.Request(&request, &reply); err != nil {
-		sf.logger.Warnw("Failed to get master sink info", "error", err)
+		sf.logger.Warn().Err(err).Msg("Failed to get master sink info")
 
 		return nil, fmt.Errorf("get master sink info: %w", err)
 	}
@@ -155,7 +158,7 @@ func (sf *PASessionFinder) getMasterSourceSession() (*masterSession, error) {
 	var reply proto.GetSourceInfoReply
 
 	if err := sf.client.Request(&request, &reply); err != nil {
-		sf.logger.Warnw("Failed to get master source info", "error", err)
+		sf.logger.Warn().Err(err).Msg("Failed to get master source info")
 
 		return nil, fmt.Errorf("get master source info: %w", err)
 	}
@@ -171,7 +174,7 @@ func (sf *PASessionFinder) enumerateAndAddSessions(sessions *[]Session) error {
 	reply := proto.GetSinkInputInfoListReply{}
 
 	if err := sf.client.Request(&request, &reply); err != nil {
-		sf.logger.Warnw("Failed to get sink input list", "error", err)
+		sf.logger.Warn().Err(err).Msg("Failed to get sink input list")
 
 		return fmt.Errorf("get sink input list: %w", err)
 	}
@@ -180,8 +183,7 @@ func (sf *PASessionFinder) enumerateAndAddSessions(sessions *[]Session) error {
 		name, ok := info.Properties["application.process.binary"]
 
 		if !ok {
-			sf.logger.Warnw("Failed to get sink input's process name",
-				"sinkInputIndex", info.SinkInputIndex)
+			sf.logger.Warn().Int("sinkInputIndex", int(info.SinkInputIndex)).Msg("Failed to get sink input's process name")
 
 			continue
 		}
