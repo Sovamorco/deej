@@ -28,9 +28,9 @@ type Slider struct {
 
 	parent *Sliders
 
-	value     float32
-	targets   []string
-	sm        *session.Monitor
+	value   float32
+	targets []string
+	sm      *session.Monitor
 }
 
 type Sliders struct {
@@ -57,9 +57,9 @@ func NewSliders(ctx context.Context, mapping [][]string, sm *session.Monitor) *S
 			parent: sliders,
 
 			// set to -1 because it's an impossible value, so it will prompt a change on first read.
-			value:     -1,
-			targets:   make([]string, 0),
-			sm:        sm,
+			value:   -1,
+			targets: make([]string, 0),
+			sm:      sm,
 		}
 	}
 

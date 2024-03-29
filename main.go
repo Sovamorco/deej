@@ -41,7 +41,9 @@ func main() {
 	tray.InitializeTray(ctx, cancel, start)
 }
 
-func start(ctx context.Context) {
+func start(ctx context.Context, cancel context.CancelFunc) {
+	defer cancel()
+
 	logger := zerolog.Ctx(ctx)
 
 	config, err := config.Load(ctx, "config.yaml")

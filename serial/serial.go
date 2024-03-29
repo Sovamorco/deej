@@ -82,18 +82,28 @@ func (s *Serial) run(ctx context.Context) {
 			logger.Error().Err(err).Msg("failed to close serial port")
 		}
 
+		reconnected := false
+
 		// try to reconnect.
 		for attempt := range reconnectAttempts {
 			logger.Debug().Int("attempt", attempt).Msg("reconnecting to serial port")
 
 			err = s.open()
 			if err == nil {
+				reconnected = true
+
 				break
 			}
 
 			logger.Error().Err(err).Msg("failed to reopen serial port")
 
 			time.Sleep(reconnectDelay)
+		}
+
+		if !reconnected {
+			s.Errors <- errorx.IllegalState.New("failed to reconnect to serial port after %d attempts", reconnectAttempts)
+
+			return
 		}
 	}
 }

@@ -63,6 +63,7 @@ func (m *Monitor) handleEvents(ctx context.Context) {
 			case pipewire.ActionAdd:
 				node, err := pipewire.GetPortNode(ctx, event.Port.ID)
 				if err != nil {
+					// this is not important, it just means that the update was not related to a port at all.
 					logger.Debug().Err(err).Msg("failed to get port node")
 
 					continue

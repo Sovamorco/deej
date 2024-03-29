@@ -9,7 +9,7 @@ import (
 	"github.com/omriharel/deej/icon"
 )
 
-func InitializeTray(ctx context.Context, cancel context.CancelFunc, onDone func(context.Context)) {
+func InitializeTray(ctx context.Context, cancel context.CancelFunc, onDone func(context.Context, context.CancelFunc)) {
 	logger := zerolog.Ctx(ctx)
 
 	onReady := func() {
@@ -37,7 +37,7 @@ func InitializeTray(ctx context.Context, cancel context.CancelFunc, onDone func(
 			systray.Quit()
 		}()
 
-		onDone(ctx)
+		onDone(ctx, cancel)
 	}
 
 	onExit := func() {
