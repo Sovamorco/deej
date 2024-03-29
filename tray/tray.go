@@ -9,7 +9,12 @@ import (
 	"github.com/omriharel/deej/icon"
 )
 
-func InitializeTray(ctx context.Context, cancel context.CancelFunc, onDone func(context.Context, context.CancelFunc)) {
+func InitializeTray(
+	ctx context.Context, cancel context.CancelFunc,
+	start func(context.Context, context.CancelFunc) error,
+) int {
+	exitCode := 0
+
 	logger := zerolog.Ctx(ctx)
 
 	onReady := func() {
@@ -37,7 +42,12 @@ func InitializeTray(ctx context.Context, cancel context.CancelFunc, onDone func(
 			systray.Quit()
 		}()
 
-		onDone(ctx, cancel)
+		err := start(ctx, cancel)
+		if err != nil {
+			logger.Error().Err(err).Msg("Failed to run deej")
+
+			exitCode = 1
+		}
 	}
 
 	onExit := func() {
@@ -47,4 +57,6 @@ func InitializeTray(ctx context.Context, cancel context.CancelFunc, onDone func(
 	// start the tray icon
 	logger.Debug().Msg("Running in tray")
 	systray.Run(onReady, onExit)
+
+	return exitCode
 }

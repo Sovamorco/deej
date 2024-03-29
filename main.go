@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -36,24 +37,24 @@ func main() {
 
 	ctx = logger.WithContext(ctx)
 
-	defer cancel()
+	exitCode := tray.InitializeTray(ctx, cancel, start)
 
-	tray.InitializeTray(ctx, cancel, start)
+	os.Exit(exitCode)
 }
 
-func start(ctx context.Context, cancel context.CancelFunc) {
+func start(ctx context.Context, cancel context.CancelFunc) error {
 	defer cancel()
 
 	logger := zerolog.Ctx(ctx)
 
 	config, err := config.Load(ctx, "config.yaml")
 	if err != nil {
-		logger.Fatal().Err(err).Msg("Failed to load config")
+		return errorx.Decorate(err, "load config")
 	}
 
 	sm, err := session.NewMonitor(ctx)
 	if err != nil {
-		logger.Fatal().Err(err).Msg("Failed to create session monitor")
+		return errorx.Decorate(err, "create session monitor")
 	}
 
 	slds := sliders.NewSliders(ctx, config.SliderMapping, sm)
@@ -62,7 +63,7 @@ func start(ctx context.Context, cancel context.CancelFunc) {
 
 	err = sp.Run(ctx)
 	if err != nil {
-		logger.Fatal().Err(err).Msg("Failed to open serial port")
+		return errorx.Decorate(err, "run serial connection")
 	}
 
 mainloop:
@@ -75,9 +76,11 @@ mainloop:
 		case err := <-sp.Errors:
 			logger.Error().Err(err).Msg("Serial error")
 
-			break mainloop
+			return err
 		case <-ctx.Done():
 			break mainloop
 		}
 	}
+
+	return nil
 }
