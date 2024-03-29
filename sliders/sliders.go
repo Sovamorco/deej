@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/omriharel/deej/notifier"
 	"github.com/omriharel/deej/session"
 	"github.com/rs/zerolog"
 )
@@ -18,7 +17,7 @@ import (
 const (
 	maxValue = 1023.0
 	// noise margin for absolute value change.
-	noiseMargin            = 0.015
+	noiseMargin            = 0.01
 	sessionVolumeInitDelay = 150 * time.Millisecond
 
 	targetUnmapped = "deej.unmapped"
@@ -29,11 +28,9 @@ type Slider struct {
 
 	parent *Sliders
 
-	prevValue float32
 	value     float32
 	targets   []string
 	sm        *session.Monitor
-	vn        *notifier.VolumeNotifier
 }
 
 type Sliders struct {
@@ -41,18 +38,16 @@ type Sliders struct {
 
 	sliders []*Slider
 	sm      *session.Monitor
-	vn      *notifier.VolumeNotifier
 
 	unmappedProcesses []string
 }
 
-func NewSliders(ctx context.Context, mapping [][]string, sm *session.Monitor, vn *notifier.VolumeNotifier) *Sliders {
+func NewSliders(ctx context.Context, mapping [][]string, sm *session.Monitor) *Sliders {
 	logger := zerolog.Ctx(ctx)
 
 	sliders := &Sliders{
 		sliders: make([]*Slider, len(mapping)),
 		sm:      sm,
-		vn:      vn,
 
 		unmappedProcesses: make([]string, 0),
 	}
@@ -62,11 +57,9 @@ func NewSliders(ctx context.Context, mapping [][]string, sm *session.Monitor, vn
 			parent: sliders,
 
 			// set to -1 because it's an impossible value, so it will prompt a change on first read.
-			prevValue: -1,
-			value:     0,
+			value:     -1,
 			targets:   make([]string, 0),
 			sm:        sm,
-			vn:        vn,
 		}
 	}
 
@@ -117,16 +110,15 @@ func (s *Sliders) HandleLine(ctx context.Context, line []byte) {
 
 		slider.Lock()
 
-		if math.Abs(float64(nvf-slider.prevValue)) < noiseMargin {
+		if math.Abs(float64(nvf-slider.value)) < noiseMargin {
 			slider.Unlock()
 
 			continue
 		}
 
-		slider.prevValue = slider.value
 		slider.value = nvf
 
-		logger.Trace().
+		logger.Debug().
 			Int("idx", i).
 			Float32("value", slider.value).
 			Strs("targets", slider.targets).
@@ -152,8 +144,6 @@ func (s *Slider) handleValueChange(ctx context.Context) {
 			if err != nil {
 				logger.Error().Err(err).Str("binary", node.Binary).Msg("Failed to set volume")
 			}
-
-			go s.vn.Notify(ctx, target, s.value)
 		}
 
 		if target == targetUnmapped {
@@ -165,8 +155,6 @@ func (s *Slider) handleValueChange(ctx context.Context) {
 					if err != nil {
 						logger.Error().Err(err).Str("binary", node.Binary).Msg("Failed to set volume")
 					}
-
-					go s.vn.Notify(ctx, process, s.value)
 				}
 			}
 

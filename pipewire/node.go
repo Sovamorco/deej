@@ -18,7 +18,7 @@ type Node struct {
 func (n *Node) SetVolume(ctx context.Context, v float32) error {
 	logger := zerolog.Ctx(ctx)
 
-	logger.Debug().Str("binary", n.Binary).Int("id", n.ID).Float32("volume", v).Msg("setting volume")
+	logger.Trace().Str("binary", n.Binary).Int("id", n.ID).Float32("volume", v).Msg("setting volume")
 
 	vstring := fmt.Sprintf("'{ volume: %.6f }'", v)
 

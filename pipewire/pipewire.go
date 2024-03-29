@@ -21,11 +21,13 @@ const (
 
 	ActionAdd    = "add"
 	ActionRemove = "remove"
+
+	bufferSize = 256
 )
 
 type Action string
 
-type Dump []struct {
+type Object struct {
 	ID   int    `json:"id"`
 	Type string `json:"type"`
 	Info struct {
@@ -42,6 +44,8 @@ type Dump []struct {
 		} `json:"params"`
 	} `json:"info"`
 }
+
+type Dump []Object
 
 type Port struct {
 	ID int
@@ -87,6 +91,8 @@ func (pwm *PWMonitor) parseMonitorOutputs(ctx context.Context, stream io.Reader)
 
 	bs := bufio.NewScanner(stream)
 
+	bs.Buffer(nil, bufferSize)
+
 	for bs.Scan() {
 		line := bs.Bytes()
 
@@ -126,36 +132,48 @@ func (pwm *PWMonitor) parseMonitorOutputs(ctx context.Context, stream io.Reader)
 func GetPortNode(ctx context.Context, oid int) (*Node, error) {
 	logger := zerolog.Ctx(ctx).With().Int("oid", oid).Logger()
 
-	obj, err := getObjectInfo(ctx, oid)
+	dump, err := getObjectInfo(ctx, oid)
 	if err != nil {
 		logger.Error().Err(err).Msg("get object info")
 	}
 
-	if len(obj) != 1 || obj[0].ID != oid || obj[0].Type != pwTypePort || obj[0].Info.Props.NodeID == 0 {
-		return nil, errorx.IllegalState.New("invalid port object")
+	var obj *Object
+
+	for _, pot := range dump {
+		if pot.ID == oid && pot.Type == pwTypePort && pot.Info.Props.NodeID != 0 {
+			obj = &pot
+		}
 	}
 
-	node, err := getObjectInfo(ctx, obj[0].Info.Props.NodeID)
+	if obj == nil {
+		return nil, errorx.IllegalState.New("failed to get port object")
+	}
+
+	dump, err = getObjectInfo(ctx, obj.Info.Props.NodeID)
 	if err != nil {
 		return nil, errorx.Decorate(err, "get node object")
 	}
 
-	if len(node) != 1 || node[0].Type != pwTypeNode {
-		return nil, errorx.IllegalState.New("invalid node object")
+	var node *Object
+
+	for _, pot := range dump {
+		if pot.ID == obj.Info.Props.NodeID && pot.Type == pwTypeNode && pot.Info.Props.MediaClass == pwMediaClassOutput {
+			node = &pot
+		}
 	}
 
-	if node[0].Info.Props.MediaClass != pwMediaClassOutput {
-		return nil, errorx.IllegalState.New("invalid node media class")
+	if node == nil {
+		return nil, errorx.IllegalState.New("failed to get node object")
 	}
 
-	name := node[0].Info.Props.Binary
+	name := node.Info.Props.Binary
 	if len(name) == 0 {
-		name = node[0].Info.Props.Name
+		name = node.Info.Props.Name
 	}
 
 	return &Node{
 		PortID: oid,
-		ID:     node[0].ID,
+		ID:     node.ID,
 		Binary: name,
 	}, nil
 }

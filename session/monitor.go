@@ -63,7 +63,7 @@ func (m *Monitor) handleEvents(ctx context.Context) {
 			case pipewire.ActionAdd:
 				node, err := pipewire.GetPortNode(ctx, event.Port.ID)
 				if err != nil {
-					logger.Trace().Err(err).Msg("failed to get port node")
+					logger.Debug().Err(err).Msg("failed to get port node")
 
 					continue
 				}
