@@ -15,3 +15,5 @@ preferences.yaml
 .history/
 deej
 config.yaml
+test/
+vendor/

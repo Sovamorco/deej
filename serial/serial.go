@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	readTimeout = 100 * time.Millisecond
+	readTimeout = 500 * time.Millisecond
 
 	reconnectAttempts = 10
 	reconnectDelay    = 1 * time.Second

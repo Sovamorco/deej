@@ -7,6 +7,7 @@ import (
 
 	"github.com/joomcode/errorx"
 	"github.com/omriharel/deej/config"
+	"github.com/omriharel/deej/notifier"
 	"github.com/omriharel/deej/serial"
 	"github.com/omriharel/deej/session"
 	"github.com/omriharel/deej/sliders"
@@ -49,17 +50,14 @@ func start(ctx context.Context) {
 		logger.Fatal().Err(err).Msg("Failed to load config")
 	}
 
-	notifier := session.NewVolumeNotifier()
+	vn := notifier.NewVolumeNotifier()
 
-	sf, err := session.NewSessionFinder(ctx, notifier)
+	sm, err := session.NewMonitor(ctx)
 	if err != nil {
-		logger.Fatal().Err(err).Msg("Failed to create session finder")
+		logger.Fatal().Err(err).Msg("Failed to create session monitor")
 	}
 
-	slds, err := sliders.NewSliders(ctx, config.SliderMapping, sf)
-	if err != nil {
-		logger.Fatal().Err(err).Msg("Failed to create sliders")
-	}
+	slds := sliders.NewSliders(ctx, config.SliderMapping, sm, vn)
 
 	sp := serial.NewSerial(config.SerialPort, config.BaudRate)
 

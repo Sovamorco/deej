@@ -25,6 +25,8 @@ github.com/getlantern/uuid v1.2.0 h1:pGrGaCV7XEaG6lvjWkwf8Y92BjB/9yFmkKsNFpRQ7rc
 github.com/getlantern/uuid v1.2.0/go.mod h1:uX10hOzZUUDR+oYNSIks+RcozOEiwTNC/K2rw9SUi1k=
 github.com/go-stack/stack v1.8.0 h1:5SgMzNM5HxrEjV0ww2lTmX6E2Izsfxas4+YHWRs3Lsk=
 github.com/go-stack/stack v1.8.0/go.mod h1:v0f6uXyyMGvRgIKkXu+yp6POWl0qKG85gN/melR3HDY=
+github.com/godbus/dbus v4.1.0+incompatible h1:WqqLRTsQic3apZUK9qC5sGNfXthmPXzUZ7nQPrNITa4=
+github.com/godbus/dbus v4.1.0+incompatible/go.mod h1:/YcGZj5zSblfDWMMoOzV4fas9FZnQYTkDnsGvmh2Grw=
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
 github.com/hashicorp/go-cleanhttp v0.5.2 h1:035FKYIWjmULyFRBKPs8TBQoi0x6d9G4xc9neXJWAZQ=
 github.com/hashicorp/go-cleanhttp v0.5.2/go.mod h1:kO/YDlP8L1346E6Sodw+PrpBSV4/SoxCXGY6BqNFT48=
@@ -75,6 +77,8 @@ github.com/sovamorco/errorx v0.0.0-20240229170421-ba018a384e64 h1:3evqrBXrTMOXYK
 github.com/sovamorco/errorx v0.0.0-20240229170421-ba018a384e64/go.mod h1:eQzdtdlNyN7etw6YCS4W4+lu442waxZYw5yvz0ULrRo=
 github.com/sovamorco/gommon v0.0.0-20231117111929-aaa03d851447 h1:YU5uZJAURrO3gWFHLnV0r28xFEV7Q9yuCAE4eHWQM48=
 github.com/sovamorco/gommon v0.0.0-20231117111929-aaa03d851447/go.mod h1:7PylwG8QcMrZUBr1bG5BqCkAKTYkWEY95MHZlTfQjOw=
+github.com/sqp/pulseaudio v0.0.0-20180916175200-29ac6bfa231c h1:GtYMHdPBniUh0I+RZ563TsL6ZlvCbaO7jbEOsDDB7EI=
+github.com/sqp/pulseaudio v0.0.0-20180916175200-29ac6bfa231c/go.mod h1:RH1uOz6XaP849IvlvocEoBsW/SMmxRTzEd7olkyO2zI=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.2.2/go.mod h1:a8OnRcib4nhh0OaRAV+Yts87kKdq0PP7pXfy6kDkUVs=
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=

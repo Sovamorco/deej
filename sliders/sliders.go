@@ -4,80 +4,80 @@ import (
 	"bytes"
 	"context"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/joomcode/errorx"
+	"github.com/omriharel/deej/notifier"
 	"github.com/omriharel/deej/session"
 	"github.com/rs/zerolog"
-	"golang.org/x/exp/maps"
 )
 
 const (
 	maxValue = 1023.0
 	// noise margin for absolute value change.
-	noiseMargin = 0.01
+	noiseMargin            = 0.015
+	sessionVolumeInitDelay = 150 * time.Millisecond
 
 	targetUnmapped = "deej.unmapped"
 )
 
 type Slider struct {
 	sync.RWMutex `exhaustruct:"optional"`
-	prevValue    float32
-	value        float32
-	sessions     map[string][]session.Session
+
+	parent *Sliders
+
+	prevValue float32
+	value     float32
+	targets   []string
+	sm        *session.Monitor
+	vn        *notifier.VolumeNotifier
 }
 
 type Sliders struct {
 	sync.RWMutex `exhaustruct:"optional"`
-	sliders      []*Slider
-	sf           *session.PASessionFinder
+
+	sliders []*Slider
+	sm      *session.Monitor
+	vn      *notifier.VolumeNotifier
+
+	unmappedProcesses []string
 }
 
-func NewSliders(ctx context.Context, mapping [][]string, sf *session.PASessionFinder) (*Sliders, error) {
+func NewSliders(ctx context.Context, mapping [][]string, sm *session.Monitor, vn *notifier.VolumeNotifier) *Sliders {
 	logger := zerolog.Ctx(ctx)
 
 	sliders := &Sliders{
 		sliders: make([]*Slider, len(mapping)),
-		sf:      sf,
+		sm:      sm,
+		vn:      vn,
+
+		unmappedProcesses: make([]string, 0),
 	}
 
 	for i := range len(mapping) {
 		sliders.sliders[i] = &Slider{
+			parent: sliders,
+
 			// set to -1 because it's an impossible value, so it will prompt a change on first read.
 			prevValue: -1,
 			value:     0,
-			sessions:  make(map[string][]session.Session, 0),
+			targets:   make([]string, 0),
+			sm:        sm,
+			vn:        vn,
 		}
 	}
 
-	err := sliders.FromConfig(ctx, mapping)
-	if err != nil {
-		return nil, errorx.Decorate(err, "init from config")
-	}
+	sliders.FromConfig(ctx, mapping)
 
-	go sliders.watchSessions(ctx)
+	sliders.sm.OnUpdate(sliders.refreshUnmapped)
+	sliders.sm.OnUpdate(sliders.setVolumes)
 
 	logger.Debug().Msg("Sliders initialized")
 
-	return sliders, nil
-}
-
-func (s *Sliders) watchSessions(ctx context.Context) {
-	logger := zerolog.Ctx(ctx)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-s.sf.Updates:
-			err := s.updateSessions(ctx)
-			if err != nil {
-				logger.Error().Err(err).Msg("Failed to update sessions")
-			}
-		}
-	}
+	return sliders
 }
 
 func (s *Sliders) HandleLine(ctx context.Context, line []byte) {
@@ -94,6 +94,10 @@ func (s *Sliders) HandleLine(ctx context.Context, line []byte) {
 	s.RUnlock()
 
 	for i, nv := range nvs {
+		if i > len(s.sliders) {
+			break
+		}
+
 		nvi, err := strconv.Atoi(strings.TrimSpace(string(nv)))
 		if err != nil {
 			return
@@ -122,13 +126,13 @@ func (s *Sliders) HandleLine(ctx context.Context, line []byte) {
 		slider.prevValue = slider.value
 		slider.value = nvf
 
-		slider.Unlock()
-
-		logger.Debug().
+		logger.Trace().
 			Int("idx", i).
 			Float32("value", slider.value).
-			Strs("targets", maps.Keys(slider.sessions)).
+			Strs("targets", slider.targets).
 			Msg("Slider value changed")
+
+		slider.Unlock()
 
 		go slider.handleValueChange(ctx)
 	}
@@ -140,17 +144,40 @@ func (s *Slider) handleValueChange(ctx context.Context) {
 	s.RLock()
 	defer s.RUnlock()
 
-	for _, sessions := range s.sessions {
-		for _, sess := range sessions {
-			err := sess.SetVolume(ctx, s.value)
+	for _, target := range s.targets {
+		s.sm.RLock()
+
+		for _, node := range s.sm.Nodes[target] {
+			err := node.SetVolume(ctx, s.value)
 			if err != nil {
-				logger.Error().Err(err).Str("key", sess.Key()).Msg("Failed to set volume")
+				logger.Error().Err(err).Str("binary", node.Binary).Msg("Failed to set volume")
 			}
+
+			go s.vn.Notify(ctx, target, s.value)
 		}
+
+		if target == targetUnmapped {
+			s.parent.RLock()
+
+			for _, process := range s.parent.unmappedProcesses {
+				for _, node := range s.sm.Nodes[process] {
+					err := node.SetVolume(ctx, s.value)
+					if err != nil {
+						logger.Error().Err(err).Str("binary", node.Binary).Msg("Failed to set volume")
+					}
+
+					go s.vn.Notify(ctx, process, s.value)
+				}
+			}
+
+			s.parent.RUnlock()
+		}
+
+		s.sm.RUnlock()
 	}
 }
 
-func (s *Sliders) FromConfig(ctx context.Context, userMapping [][]string) error {
+func (s *Sliders) FromConfig(ctx context.Context, userMapping [][]string) {
 	s.RLock()
 
 	for i, targets := range userMapping {
@@ -162,11 +189,11 @@ func (s *Sliders) FromConfig(ctx context.Context, userMapping [][]string) error 
 
 		slider.Lock()
 
-		slider.sessions = make(map[string][]session.Session, len(targets))
+		slider.targets = make([]string, 0, len(targets))
 
 		for _, target := range targets {
 			if target != "" {
-				slider.sessions[target] = make([]session.Session, 0)
+				slider.targets = append(slider.targets, target)
 			}
 		}
 
@@ -175,72 +202,53 @@ func (s *Sliders) FromConfig(ctx context.Context, userMapping [][]string) error 
 
 	s.RUnlock()
 
-	err := s.updateSessions(ctx)
-	if err != nil {
-		return errorx.Decorate(err, "update sessions")
-	}
-
-	return nil
+	s.refreshUnmapped(ctx)
 }
 
-func (s *Sliders) updateSessions(ctx context.Context) error {
-	allSessions, err := s.sf.GetAllSessions(ctx)
-	if err != nil {
-		return errorx.Decorate(err, "get all sessions")
-	}
+func (s *Sliders) refreshUnmapped(_ context.Context) {
+	s.RLock()
 
-	unmappedSessions := make([]session.Session, 0, len(allSessions))
+	s.sm.RLock()
+	defer s.sm.RUnlock()
 
-	s.Lock()
-	defer s.Unlock()
+	unmapped := make([]string, 0)
 
-	for _, sess := range allSessions {
-		mapped := s.mapSession(sess)
+	for process := range s.sm.Nodes {
+		mapped := false
+
+		for _, slider := range s.sliders {
+			slider.RLock()
+
+			if slices.Contains(slider.targets, process) {
+				mapped = true
+
+				slider.RUnlock()
+
+				break
+			}
+
+			slider.RUnlock()
+		}
 
 		if !mapped {
-			unmappedSessions = append(unmappedSessions, sess)
+			unmapped = append(unmapped, process)
 		}
 	}
 
-	for _, slider := range s.sliders {
-		slider.Lock()
+	s.RUnlock()
 
-		for target := range slider.sessions {
-			if target == targetUnmapped {
-				slider.sessions[target] = unmappedSessions
-			}
-		}
+	s.Lock()
 
-		slider.Unlock()
-	}
+	s.unmappedProcesses = unmapped
+
+	s.Unlock()
+}
+
+func (s *Sliders) setVolumes(ctx context.Context) {
+	s.RLock()
+	defer s.RUnlock()
 
 	for _, slider := range s.sliders {
 		go slider.handleValueChange(ctx)
 	}
-
-	return nil
-}
-
-func (s *Sliders) mapSession(sess session.Session) bool {
-	mapped := false
-
-	for _, slider := range s.sliders {
-		for target := range slider.sessions {
-			if strings.EqualFold(sess.Key(), target) {
-				slider.Lock()
-				slider.sessions[target] = append(slider.sessions[target], sess)
-				slider.Unlock()
-
-				mapped = true
-			}
-		}
-	}
-
-	return mapped || isSystemSession(sess.Key())
-}
-
-func isSystemSession(name string) bool {
-	return name == session.MasterSessionName ||
-		name == session.SystemSessionName ||
-		name == session.InputSessionName
 }

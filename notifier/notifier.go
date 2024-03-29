@@ -1,4 +1,4 @@
-package session
+package notifier
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 
 const (
 	notificationLifetime = 1 * time.Second
-	notificationMaxFreq  = 100 * time.Millisecond
+	notificationMaxFreq  = 300 * time.Millisecond
 )
 
 type ProcessNotifyData struct {

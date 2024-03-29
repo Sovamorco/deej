@@ -9,11 +9,13 @@ require (
 	github.com/jfreymuth/pulse v0.1.1
 	github.com/joomcode/errorx v1.1.1
 	github.com/rs/zerolog v1.32.0
+	github.com/sqp/pulseaudio v0.0.0-20180916175200-29ac6bfa231c
 	golang.org/x/exp v0.0.0-20240325151524-a685a6edb6d8
 )
 
 require (
 	github.com/fatih/color v1.7.0 // indirect
+	github.com/godbus/dbus v4.1.0+incompatible // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.5 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
