@@ -66,7 +66,6 @@ func start(ctx context.Context, cancel context.CancelFunc) error {
 		return errorx.Decorate(err, "run serial connection")
 	}
 
-mainloop:
 	for {
 		select {
 		case line := <-sp.Lines:
@@ -78,9 +77,7 @@ mainloop:
 
 			return err
 		case <-ctx.Done():
-			break mainloop
+			return nil
 		}
 	}
-
-	return nil
 }

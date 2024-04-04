@@ -17,7 +17,7 @@ import (
 const (
 	maxValue = 1023.0
 	// noise margin for absolute value change.
-	noiseMargin            = 0.01
+	noiseMargin            = 0.002
 	sessionVolumeInitDelay = 150 * time.Millisecond
 
 	targetUnmapped = "deej.unmapped"
@@ -80,14 +80,16 @@ func (s *Sliders) HandleLine(ctx context.Context, line []byte) {
 
 	s.RLock()
 
-	if len(nvs) < len(s.sliders) {
-		return
-	}
+	sls := len(s.sliders)
 
 	s.RUnlock()
 
+	if len(nvs) < sls {
+		return
+	}
+
 	for i, nv := range nvs {
-		if i > len(s.sliders) {
+		if i > sls {
 			break
 		}
 

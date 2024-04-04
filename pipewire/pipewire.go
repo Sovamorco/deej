@@ -62,32 +62,57 @@ type PWMonitor struct {
 }
 
 func MonitorOutputs(ctx context.Context) (chan Event, error) {
-	cmd := exec.CommandContext(ctx, "pw-link", "-Iom")
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, errorx.Decorate(err, "get stdout pipe")
-	}
-
 	pwm := PWMonitor{
-		cmd:    cmd,
+		cmd:    nil,
 		events: make(chan Event),
 	}
 
-	err = cmd.Start()
-	if err != nil {
-		return nil, errorx.Decorate(err, "start command")
-	}
-
-	go pwm.parseMonitorOutputs(ctx, stdout)
+	go pwm.run(ctx)
 
 	return pwm.events, nil
 }
 
-func (pwm *PWMonitor) parseMonitorOutputs(ctx context.Context, stream io.Reader) {
+func (pwm *PWMonitor) run(ctx context.Context) {
 	logger := zerolog.Ctx(ctx)
 
-	defer pwm.close(logger.With().Logger())
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		cmd := exec.CommandContext(ctx, "pw-link", "-Iom")
+
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			logger.Error().Err(err).Msg("get stdout pipe")
+
+			continue
+		}
+
+		err = cmd.Start()
+		if err != nil {
+			logger.Error().Err(err).Msg("start command")
+
+			continue
+		}
+
+		go pwm.parseMonitorOutputs(ctx, stdout)
+
+		err = cmd.Wait()
+		if err == nil {
+			logger.Error().Err(err).Msg("wait for command")
+		}
+
+		logger.Debug().Msg("pw-link has exited")
+
+		pwm.close(logger.With().Logger())
+	}
+}
+
+func (pwm *PWMonitor) parseMonitorOutputs(ctx context.Context, stream io.Reader) {
+	logger := zerolog.Ctx(ctx)
 
 	bs := bufio.NewScanner(stream)
 
