@@ -72,7 +72,7 @@ func (s *Serial) run(ctx context.Context) {
 	logger := zerolog.Ctx(ctx)
 
 	for {
-		err := s.scanLines(ctx)
+		err := s.scanLines()
 		if err != nil {
 			s.Errors <- errorx.Decorate(err, "scan lines")
 		}
@@ -108,17 +108,11 @@ func (s *Serial) run(ctx context.Context) {
 	}
 }
 
-func (s *Serial) scanLines(ctx context.Context) error {
-	logger := zerolog.Ctx(ctx)
-
+func (s *Serial) scanLines() error {
 	scanner := bufio.NewScanner(s.f)
 
 	for scanner.Scan() {
-		logger.Debug().Msg("read line")
-
 		s.Lines <- scanner.Bytes()
-
-		logger.Debug().Msg("sent line to channel")
 	}
 
 	if err := scanner.Err(); err != nil {
