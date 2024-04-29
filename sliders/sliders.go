@@ -89,7 +89,7 @@ func (s *Sliders) HandleLine(ctx context.Context, line []byte) {
 	}
 
 	for i, nv := range nvs {
-		if i > sls {
+		if i >= sls {
 			break
 		}
 
