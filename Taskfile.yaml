@@ -17,6 +17,7 @@ tasks:
       - "go" has to be in PATH
     cmds:
     - go mod tidy
+    - go mod vendor
 
   fmt:
     desc:    This task runs go fmt on whole project
